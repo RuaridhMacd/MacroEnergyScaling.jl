@@ -112,28 +112,32 @@ function scale_and_update_constraint!(con_ref::ConstraintRef, scaling_settings::
         (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * rhs_multiplier, scaling_settings)
         new_var_coeff_pairs[updated_var] = updated_coeff
     end
-    update_scaled_terms!(con_ref, first.(var_coeff_pairs), new_var_coeff_pairs, rhs_multiplier)
+    update_scaled_terms!(con_ref, var_coeff_pairs, new_var_coeff_pairs, rhs_multiplier)
 end
 
 @doc raw"""
-    update_scaled_terms!(con_ref::ConstraintRef, original_vars::Vector{VariableRef}, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real)
+    update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real)
 
 Update the terms and RHS of `con_ref` in place using the scaled variable-coefficient pairs.
-Variables from the original constraint which are absent from `var_coeff_pairs` have their
-coefficients set to zero. This preserves the identity and validity of `con_ref`.
+Only terms which changed, were added, or were removed are modified. This preserves the
+identity and validity of `con_ref`.
 """
-function update_scaled_terms!(con_ref::ConstraintRef, original_vars::Vector{VariableRef}, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real)
-    vars_to_remove = Set(original_vars)
+function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real)
+    original_coefficients = Dict(original_var_coeff_pairs)
     variables = VariableRef[]
     coefficients = Float64[]
-    for (var, coeff) in var_coeff_pairs
-        push!(variables, var)
-        push!(coefficients, coeff)
-        delete!(vars_to_remove, var)
+    for (var, scaled_coeff) in scaled_var_coeff_pairs
+        if !haskey(original_coefficients, var) || original_coefficients[var] != scaled_coeff
+            push!(variables, var)
+            push!(coefficients, scaled_coeff)
+        end
+        delete!(original_coefficients, var)
     end
-    for var in vars_to_remove
-        push!(variables, var)
-        push!(coefficients, 0.0)
+    for (var, original_coeff) in original_coefficients
+        if original_coeff != 0.0
+            push!(variables, var)
+            push!(coefficients, 0.0)
+        end
     end
     if !isempty(variables)
         set_normalized_coefficient(fill(con_ref, length(variables)), variables, coefficients)
