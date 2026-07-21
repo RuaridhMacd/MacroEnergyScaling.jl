@@ -204,7 +204,7 @@ Calculate the multiplier to scale the right-hand side of the constraint `con_ref
 function calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
     rhs = normalized_rhs(con_ref)
     abs_rhs = abs(rhs)
-    if rhs_lb < abs_rhs < rhs_ub
+    if rhs_lb <= abs_rhs <= rhs_ub
         return 1.0
     end
     coeff_and_rhs = abs.(append!(constraint_object(con_ref).func.terms.vals, rhs))
