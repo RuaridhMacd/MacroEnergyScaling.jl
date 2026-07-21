@@ -78,25 +78,26 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
         end
         set_normalized_rhs(con_ref, normalized_rhs(con_ref) * min_ratio)
         action_count += 1
-    # Else we'll recreate the constraint with proxy variables to scale the coefficients one-by-one
+    # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
-        scale_and_remake_constraint(con_ref, scaling_settings)
+        scale_and_update_constraint!(con_ref, scaling_settings)
         action_count += 1
     end
     return action_count
 end
 
 @doc raw"""
-    scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
+    scale_and_update_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
 
-Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`.
+Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`
+without changing its `ConstraintRef`.
 
 First we check if we can scale the right-hand side constant without creating proxy variables.
 Next, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
-The original constraint is then replaced with a new constraint using the scaled variable-coefficient pairs.
+The scaled variable-coefficient pairs are then applied to the original constraint in place.
 """
-function scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
-    var_coeff_pairs = constraint_object(con_ref).func.terms
+function scale_and_update_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
+    var_coeff_pairs = collect(constraint_object(con_ref).func.terms)
     new_var_coeff_pairs = OrderedDict{VariableRef, Float64}()
 
     # First we want to check if we need to scale the RHS constant
@@ -111,7 +112,36 @@ function scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::S
         (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * rhs_multiplier, scaling_settings)
         new_var_coeff_pairs[updated_var] = updated_coeff
     end
-    replace_constraint!(con_ref, new_var_coeff_pairs, rhs_multiplier)
+    update_scaled_terms!(con_ref, first.(var_coeff_pairs), new_var_coeff_pairs, rhs_multiplier)
+end
+
+@doc raw"""
+    update_scaled_terms!(con_ref::ConstraintRef, original_vars::Vector{VariableRef}, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real)
+
+Update the terms and RHS of `con_ref` in place using the scaled variable-coefficient pairs.
+Variables from the original constraint which are absent from `var_coeff_pairs` have their
+coefficients set to zero. This preserves the identity and validity of `con_ref`.
+"""
+function update_scaled_terms!(con_ref::ConstraintRef, original_vars::Vector{VariableRef}, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real)
+    vars_to_remove = Set(original_vars)
+    variables = VariableRef[]
+    coefficients = Float64[]
+    for (var, coeff) in var_coeff_pairs
+        push!(variables, var)
+        push!(coefficients, coeff)
+        delete!(vars_to_remove, var)
+    end
+    for var in vars_to_remove
+        push!(variables, var)
+        push!(coefficients, 0.0)
+    end
+    if !isempty(variables)
+        set_normalized_coefficient(fill(con_ref, length(variables)), variables, coefficients)
+    end
+    if rhs_multiplier != 1.0
+        set_normalized_rhs(con_ref, normalized_rhs(con_ref) * rhs_multiplier)
+    end
+    return nothing
 end
 
 @doc raw"""
@@ -252,69 +282,4 @@ function make_proxy_var(var::VariableRef, multiplier::Real)
     end
     @constraint(model, var == proxy_var * multiplier)
     return proxy_var
-end
-
-@doc raw"""
-    replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rhs_multiplier::Real=1.0)
-
-Replace the constraint `con_ref` with a new constraint with the given variable-coefficient pairs and right-hand side multiplier.
-"""
-function replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rhs_multiplier::Real=1.0)
-    con_obj = constraint_object(con_ref)
-    con_name = name(con_ref)
-    model = con_ref.model
-    delete(model, con_ref)
-    unregister(model, Symbol(con_name))
-    if isnothing(var_coeff_pairs)
-        _ = make_constraint(model, con_obj.func.terms, con_obj.set, con_name, rhs_multiplier)
-    else
-        _ = make_constraint(model, var_coeff_pairs, con_obj.set, con_name, rhs_multiplier)
-    end
-    return nothing
-end
-
-@doc raw"""
-    make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs::MOI.AbstractScalarSet, con_name::AbstractString, rhs_multiplier::Real=1.0)
-
-Create a new constraint with the given variable-coefficient pairs, right-hand side, and name; then add it to the model `EP`.
-"""
-function make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs::MOI.AbstractScalarSet, con_name::AbstractString, rhs_multiplier::Real=1.0)
-    expr = AffExpr()
-    for (var, coeff) in var_coeff_pairs
-        add_to_expression!(expr, var, coeff)
-    end
-    new_con = @constraint(EP, expr in rhs; base_name=con_name)
-    if rhs_multiplier != 1.0
-        set_normalized_rhs(new_con, normalized_rhs(new_con) * rhs_multiplier)
-    end
-    name, indices = parse_constraint_name(con_name)
-    if indices === nothing
-        EP[Symbol(name)] = new_con
-    else
-        EP[Symbol(name)][indices...] = new_con
-    end
-    return new_con
-end
-
-@doc raw"""
-    parse_constraint_name(input::AbstractString)
-
-Parse the name of a constraint and return the name and indexes as a tuple.
-"""
-function parse_constraint_name(input::AbstractString)
-    # Find the position of the opening bracket '['
-    open_bracket_pos = findfirst(isequal('['), input)
-    if open_bracket_pos === nothing
-        # No brackets found, return the whole string as the name
-        return input, nothing
-    end
-    # Extract the name part
-    name = input[1:open_bracket_pos-1]
-    # Extract the indexes part
-    indexes_part = input[open_bracket_pos+1:end-1]  # Remove the closing bracket ']'
-    # Split the indexes part by comma
-    indexes = split(indexes_part, ',')
-    # Parse the indexes as integers
-    parsed_indexes = [parse(Int, index) for index in indexes]
-    return name, parsed_indexes
 end

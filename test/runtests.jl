@@ -78,5 +78,8 @@ end
 
         @test JuMP.is_valid(model, con)
         @test JuMP.name(con) == ""
+        @test JuMP.normalized_coefficient(con, x) == 0.0
+        @test JuMP.normalized_coefficient(con, y) == 0.0
+        @test JuMP.normalized_rhs(con) == 1.0
     end
 end
