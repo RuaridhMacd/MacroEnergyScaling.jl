@@ -44,6 +44,41 @@ end
         @test_nowarn MES.scale_constraints!(model)
     end
 
+    @testset "non-scalar-affine constraints" begin
+        expected_message = "Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints"
+
+        model = Model()
+        @variable(model, x)
+        @variable(model, y)
+        affine_con = @constraint(model, 1.0e8 * x <= 1.0e7)
+        quadratic_con = @constraint(model, y^2 <= 1.0)
+
+        error = try
+            MES.scale_constraints!(model)
+            nothing
+        catch caught_error
+            caught_error
+        end
+        @test error isa ErrorException
+        @test sprint(showerror, error) == expected_message
+        @test JuMP.normalized_coefficient(affine_con, x) == 1.0e8
+        @test_throws ArgumentError MES.scale_constraints!(ConstraintRef[affine_con, quadratic_con])
+        @test JuMP.normalized_coefficient(affine_con, x) == 1.0e8
+
+        settings = MES.ScalingSettings(scale_nonaffine = false, count_actions = true)
+        @test MES.scale_constraints!(model, settings) == 1
+        @test JuMP.normalized_coefficient(affine_con, x) == 1.0e6
+        @test JuMP.is_valid(model, quadratic_con)
+        @test_throws ErrorException MES.scale_constraints!([quadratic_con])
+        @test MES.scale_constraints!([quadratic_con], settings) == 0
+
+        nonlinear_model = Model()
+        @variable(nonlinear_model, z)
+        @constraint(nonlinear_model, sin(z) <= 1.0)
+        @test_throws ErrorException MES.scale_constraints!(nonlinear_model)
+        @test_nowarn MES.scale_constraints!(nonlinear_model, MES.ScalingSettings(scale_nonaffine = false))
+    end
+
     @testset "proxy scaling preserves an optimum" begin
         function mixed_scale_model()
             model = Model(HiGHS.Optimizer)

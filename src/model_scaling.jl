@@ -1,29 +1,17 @@
 @doc raw"""
     scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
 
-Scale the coefficients and RHS of all constraints in the model `EP` using the scaling settings `scaling_settings`.
-This function creates an array of all constraints in `EP` and then broadcasts scale_constraint!(con_ref, scaling_settings) on the array.
+Scale the scalar-affine constraints in the model `EP` using the scaling settings `scaling_settings`.
 """
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
-    con_list = all_constraints(EP; include_variable_in_set_constraints=false)
-    action_count = scale_constraint!.(con_list, Ref(scaling_settings));
-    if scaling_settings.count_actions
-        return sum(action_count)
-    else
-        return nothing
-    end
-end
-
-@doc raw"""
-    scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
-
-Scale the coefficients and RHS of all constraints in the model `EP` using the scaling settings `scaling_settings`.
-This function calls scale_constraint!(con_ref, scaling_settings) on each constraint in `constraint_list`.
-"""
-function scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
+    constraint_types = list_of_constraint_types(EP)
+    validate_constraint_types(constraint_types, EP, scaling_settings)
     action_count = 0
-    for con_ref in constraint_list
-        action_count += scale_constraint!(con_ref, scaling_settings)
+    for (function_type, set_type) in constraint_types
+        if is_scalar_affine_constraint(function_type, set_type)
+            con_list = all_constraints(EP, function_type, set_type)
+            action_count += scale_constraint_list!(con_list, scaling_settings)
+        end
     end
     if scaling_settings.count_actions
         return action_count
@@ -31,6 +19,76 @@ function scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_sett
         return nothing
     end
 end
+
+@doc raw"""
+    scale_constraints!(constraint_list::AbstractVector{<:ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
+
+Scale the coefficients and RHS of the homogeneous constraint group `constraint_list`
+using the scaling settings `scaling_settings`.
+"""
+function scale_constraints!(constraint_list::AbstractVector{T}, scaling_settings::ScalingSettings=ScalingSettings()) where {T<:ConstraintRef}
+    if isempty(constraint_list)
+        return scaling_settings.count_actions ? 0 : nothing
+    end
+    if !isconcretetype(T)
+        throw(ArgumentError("constraint_list must have a concrete, homogeneous ConstraintRef element type. Pass constraints grouped by JuMP constraint type."))
+    end
+    if !is_scalar_affine_constraint(first(constraint_list))
+        if scaling_settings.scale_nonaffine
+            error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
+        end
+        return scaling_settings.count_actions ? 0 : nothing
+    end
+    action_count = scale_constraint_list!(constraint_list, scaling_settings)
+    if scaling_settings.count_actions
+        return action_count
+    else
+        return nothing
+    end
+end
+
+@doc raw"""
+    validate_constraint_types(constraint_types, EP::Model, scaling_settings::ScalingSettings)
+
+Validate that `constraint_types` and the nonlinear constraints in `EP` are supported.
+"""
+function validate_constraint_types(constraint_types, EP::Model, scaling_settings::ScalingSettings)
+    if scaling_settings.scale_nonaffine && num_nonlinear_constraints(EP) > 0
+        error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
+    end
+    if scaling_settings.scale_nonaffine
+        for (function_type, set_type) in constraint_types
+            if function_type != VariableRef && !is_scalar_affine_constraint(function_type, set_type)
+                error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
+            end
+        end
+    end
+    return nothing
+end
+
+is_scalar_affine_constraint(::Type, ::Type) = false
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.LessThan}) = true
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.GreaterThan}) = true
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.EqualTo}) = true
+
+function scale_constraint_list!(constraint_list::AbstractVector{T}, scaling_settings::ScalingSettings) where {T<:ConstraintRef}
+    action_count = 0
+    for con_ref in constraint_list
+        action_count += scale_constraint!(con_ref, scaling_settings)
+    end
+    return action_count
+end
+
+is_scalar_affine_constraint(::ConstraintRef) = false
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.LessThan},<:ScalarShape}) = true
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.GreaterThan},<:ScalarShape}) = true
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.EqualTo},<:ScalarShape}) = true
 
 @doc raw"""
     scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
