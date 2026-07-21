@@ -13,3 +13,11 @@ julia = "1"
 JuMP = "1"
 MathOptInterface = "1"
 OrderedCollections = "1"
+HiGHS = "1"
+
+[extras]
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["HiGHS", "Test"]
