@@ -9,7 +9,6 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
 - rhs_lb::Float64 = 1e-3: Lower bound for the right-hand side scaling.
 - rhs_ub::Float64 = 1e6: Upper bound for the right-hand side scaling.
 - allow_recursion::Bool = true: Whether to allow recursion in the scaling algorithm.
-- count_actions::Bool = false: Whether to count the number of scaling actions.
 - scale_nonaffine::Bool = true: Whether to error when non-scalar-affine constraints are encountered.
 - proxy_var_ratio_ub::Float64 = 10.0: Upper bound for the ratio of proxy variables to variables.
 - proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}} = Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}(): A dictionary mapping variables to a vector of tuples of variables and scaling coefficients.
@@ -21,7 +20,6 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     rhs_lb::Float64 = 1e-3
     rhs_ub::Float64 = 1e6
     allow_recursion::Bool = true
-    count_actions::Bool = false
     scale_nonaffine::Bool = true
     proxy_var_ratio_ub::Float64 = 10.0  
     proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}} = Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}()

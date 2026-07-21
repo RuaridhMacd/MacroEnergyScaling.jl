@@ -6,18 +6,13 @@ Scale the scalar-affine constraints in the model `EP` using the scaling settings
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
     constraint_types = list_of_constraint_types(EP)
     validate_constraint_types(constraint_types, EP, scaling_settings)
-    action_count = 0
     for (function_type, set_type) in constraint_types
         if is_scalar_affine_constraint(function_type, set_type)
             con_list = all_constraints(EP, function_type, set_type)
-            action_count += scale_constraint_list!(con_list, scaling_settings)
+            scale_constraints!(con_list, scaling_settings)
         end
     end
-    if scaling_settings.count_actions
-        return action_count
-    else
-        return nothing
-    end
+    return nothing
 end
 
 @doc raw"""
@@ -28,7 +23,7 @@ using the scaling settings `scaling_settings`.
 """
 function scale_constraints!(constraint_list::AbstractVector{T}, scaling_settings::ScalingSettings=ScalingSettings()) where {T<:ConstraintRef}
     if isempty(constraint_list)
-        return scaling_settings.count_actions ? 0 : nothing
+        return nothing
     end
     if !isconcretetype(T)
         throw(ArgumentError("constraint_list must have a concrete, homogeneous ConstraintRef element type. Pass constraints grouped by JuMP constraint type."))
@@ -37,14 +32,12 @@ function scale_constraints!(constraint_list::AbstractVector{T}, scaling_settings
         if scaling_settings.scale_nonaffine
             error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
         end
-        return scaling_settings.count_actions ? 0 : nothing
-    end
-    action_count = scale_constraint_list!(constraint_list, scaling_settings)
-    if scaling_settings.count_actions
-        return action_count
-    else
         return nothing
     end
+    for con_ref in constraint_list
+        scale_constraint!(con_ref, scaling_settings)
+    end
+    return nothing
 end
 
 @doc raw"""
@@ -74,14 +67,6 @@ is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.GreaterThan}) = true
 
 is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.EqualTo}) = true
 
-function scale_constraint_list!(constraint_list::AbstractVector{T}, scaling_settings::ScalingSettings) where {T<:ConstraintRef}
-    action_count = 0
-    for con_ref in constraint_list
-        action_count += scale_constraint!(con_ref, scaling_settings)
-    end
-    return action_count
-end
-
 is_scalar_affine_constraint(::ConstraintRef) = false
 
 is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.LessThan},<:ScalarShape}) = true
@@ -97,8 +82,6 @@ Scale the coefficients and RHS of the constraint `con_ref` using the scaling set
 `con_ref` is a JuMP constraint reference.
 """
 function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
-    action_count = 0
-
     coeff_lb = scaling_settings.coeff_lb
     coeff_ub = scaling_settings.coeff_ub
 
@@ -107,12 +90,12 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     coefficients = coefficients[coefficients .> 0] # Ignore coefficients which equal zero
 
     if length(coefficients) == 0
-        return action_count
+        return nothing
     end
 
     # If all the coefficients are within the bounds, we don't need to do anything
     if all(coeff_lb .<= coefficients .<= coeff_ub)
-        return action_count
+        return nothing
     end
 
     # Find the ratio of the maximum and minimum coefficients to the bounds
@@ -127,7 +110,6 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
             set_normalized_coefficient(con_ref, key, val / max_ratio)
         end
         set_normalized_rhs(con_ref, normalized_rhs(con_ref) / max_ratio)
-        action_count += 1
     # Else-if some coefficients are too small, and none too large
     # and multiplying by min_ratio will not make any coefficients greater than coeff_ub
     elseif min_ratio > 1 && max_ratio < 1 && max_ratio * min_ratio < 1
@@ -135,13 +117,11 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
             set_normalized_coefficient(con_ref, key, val * min_ratio)
         end
         set_normalized_rhs(con_ref, normalized_rhs(con_ref) * min_ratio)
-        action_count += 1
     # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
         scale_and_update_constraint!(con_ref, scaling_settings)
-        action_count += 1
     end
-    return action_count
+    return nothing
 end
 
 @doc raw"""

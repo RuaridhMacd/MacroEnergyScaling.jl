@@ -16,8 +16,8 @@ end
         @variable(model, x)
         con = @constraint(model, 1.0e8 * x <= 1.0e7)
 
-        settings = MES.ScalingSettings(count_actions = true)
-        @test MES.scale_constraints!(model, settings) == 1
+        settings = MES.ScalingSettings()
+        @test MES.scale_constraints!(model, settings) === nothing
         @test JuMP.is_valid(model, con)
         @test coefficient_values(con) == [1.0e6]
         @test JuMP.normalized_rhs(con) == 1.0e5
@@ -65,12 +65,12 @@ end
         @test_throws ArgumentError MES.scale_constraints!(ConstraintRef[affine_con, quadratic_con])
         @test JuMP.normalized_coefficient(affine_con, x) == 1.0e8
 
-        settings = MES.ScalingSettings(scale_nonaffine = false, count_actions = true)
-        @test MES.scale_constraints!(model, settings) == 1
+        settings = MES.ScalingSettings(scale_nonaffine = false)
+        @test MES.scale_constraints!(model, settings) === nothing
         @test JuMP.normalized_coefficient(affine_con, x) == 1.0e6
         @test JuMP.is_valid(model, quadratic_con)
         @test_throws ErrorException MES.scale_constraints!([quadratic_con])
-        @test MES.scale_constraints!([quadratic_con], settings) == 0
+        @test MES.scale_constraints!([quadratic_con], settings) === nothing
 
         nonlinear_model = Model()
         @variable(nonlinear_model, z)
