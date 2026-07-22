@@ -88,22 +88,20 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     coeff_ub = scaling_settings.coeff_ub
 
     con_obj = constraint_object(con_ref)
-    coefficients = abs.(append!(con_obj.func.terms.vals, normalized_rhs(con_ref)))
-    coefficients = coefficients[coefficients .> 0] # Ignore coefficients which equal zero
-
-    if length(coefficients) == 0
+    has_nonzero_coefficient, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, normalized_rhs(con_ref))
+    if !has_nonzero_coefficient
         return nothing
     end
 
     # If all the coefficients are within the bounds, we don't need to do anything
-    if all(coeff_lb .<= coefficients .<= coeff_ub)
+    if coeff_lb <= min_coefficient && max_coefficient <= coeff_ub
         return nothing
     end
 
     # Find the ratio of the maximum and minimum coefficients to the bounds
     # A value > 1 for either indicates that the coefficients are too large or too small
-    max_ratio = maximum(coefficients) / coeff_ub
-    min_ratio = coeff_lb / minimum(coefficients)
+    max_ratio = max_coefficient / coeff_ub
+    min_ratio = coeff_lb / min_coefficient
 
     # If some coefficients are too large, and none too small
     # and dividing by max_ratio will not make any coefficients less than coeff_lb
@@ -124,6 +122,45 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
         scale_and_update_constraint!(con_ref, scaling_settings)
     end
     return nothing
+end
+
+@doc raw"""
+    nonzero_coefficient_extrema(con_obj, rhs)
+
+Return whether a nonzero coefficient was found, followed by the smallest and
+largest nonzero coefficient magnitudes in `con_obj`, including `rhs`.
+"""
+function nonzero_coefficient_extrema(con_obj, rhs)
+    min_coefficient = Inf
+    max_coefficient = 0.0
+    has_nonzero_coefficient = false
+    for coefficient in con_obj.func.terms.vals
+        magnitude = abs(coefficient)
+        if magnitude > 0.0
+            if !has_nonzero_coefficient
+                has_nonzero_coefficient = true
+                min_coefficient = magnitude
+                max_coefficient = magnitude
+            elseif magnitude < min_coefficient
+                min_coefficient = magnitude
+            elseif magnitude > max_coefficient
+                max_coefficient = magnitude
+            end
+        end
+    end
+    rhs_magnitude = abs(rhs)
+    if rhs_magnitude > 0.0
+        if !has_nonzero_coefficient
+            has_nonzero_coefficient = true
+            min_coefficient = rhs_magnitude
+            max_coefficient = rhs_magnitude
+        elseif rhs_magnitude < min_coefficient
+            min_coefficient = rhs_magnitude
+        elseif rhs_magnitude > max_coefficient
+            max_coefficient = rhs_magnitude
+        end
+    end
+    return has_nonzero_coefficient, min_coefficient, max_coefficient
 end
 
 @doc raw"""
@@ -247,13 +284,12 @@ function calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real,
     if rhs_lb <= abs_rhs <= rhs_ub
         return 1.0
     end
-    coeff_and_rhs = abs.(append!(constraint_object(con_ref).func.terms.vals, rhs))
-    coeff_and_rhs = coeff_and_rhs[coeff_and_rhs .> 0] # Ignore coefficients which equal zero
+    _, min_coefficient, max_coefficient = nonzero_coefficient_extrema(constraint_object(con_ref), rhs)
     if abs_rhs > rhs_ub
-        return maximum([1.0 / abs_rhs, coeff_lb / coeff_ub / minimum(coeff_and_rhs)])
+        return max(1.0 / abs_rhs, coeff_lb / coeff_ub / min_coefficient)
     end
     if abs_rhs < rhs_lb
-        return minimum([1.0 / abs_rhs, coeff_ub / coeff_lb / maximum(coeff_and_rhs)])
+        return min(1.0 / abs_rhs, coeff_ub / coeff_lb / max_coefficient)
     end
 end
 
