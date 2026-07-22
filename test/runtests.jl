@@ -112,6 +112,28 @@ include("direct_model_contract.jl")
         @test_nowarn MES.scale_constraints!(model)
     end
 
+    @testset "zero RHS does not trigger global scaling" begin
+        model = Model(HiGHS.Optimizer)
+        @variable(model, x)
+        @variable(model, y)
+        con = @constraint(model, 1.0e6 * x + 1.0e-9 * y <= 0.0)
+        settings = MES.ScalingSettings()
+
+        @test MES.calc_rhs_multiplier(
+            JuMP.constraint_object(con),
+            JuMP.normalized_rhs(con),
+            settings.rhs_lb,
+            settings.rhs_ub,
+            settings.coeff_lb,
+            settings.coeff_ub,
+        ) == 1.0
+        @test MES.scale_constraints!(model, settings) === nothing
+        @test JuMP.is_valid(model, con)
+        @test JuMP.normalized_rhs(con) == 0.0
+        @test JuMP.normalized_coefficient(con, x) == 1.0e6
+        @test JuMP.normalized_coefficient(con, y) == 0.0
+    end
+
     @testset "non-scalar-affine constraints" begin
         expected_message = "Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints"
 

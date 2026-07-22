@@ -380,6 +380,7 @@ end
 Calculate the multiplier that keeps `rhs` compatible with the coefficient bounds in `con_obj` and the RHS bounds `rhs_lb` and `rhs_ub`.
 """
 function calc_rhs_multiplier(con_obj, rhs::Real, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
+    iszero(rhs) && return 1.0
     abs_rhs = abs(rhs)
     if rhs_lb <= abs_rhs <= rhs_ub
         return 1.0
