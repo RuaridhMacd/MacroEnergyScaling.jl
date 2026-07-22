@@ -297,20 +297,12 @@ function scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Re
 end
 
 @doc raw"""
-    update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real, rhs::Real)
+    update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64})
 
-Update the terms and RHS of `con_ref` in place using the scaled variable-coefficient pairs.
+Update the terms of `con_ref` in place using the scaled variable-coefficient pairs.
 Only terms which changed, were added, or were removed are modified. This preserves the
 identity and validity of `con_ref`.
 """
-function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real, rhs::Real)
-    update_scaled_terms!(con_ref, original_var_coeff_pairs, scaled_var_coeff_pairs)
-    if rhs_multiplier != 1.0
-        set_normalized_rhs(con_ref, rhs * rhs_multiplier)
-    end
-    return nothing
-end
-
 function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64})
     original_coefficients = Dict(original_var_coeff_pairs)
     variables = VariableRef[]
