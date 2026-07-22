@@ -19,6 +19,7 @@ include("direct_model_contract.jl")
         @test_throws ArgumentError MES.ScalingSettings(rhs_lb = 0.0)
         @test_throws ArgumentError MES.ScalingSettings(min_coeff = 1.0e-2)
         @test_throws ArgumentError MES.ScalingSettings(proxy_var_ratio_ub = 1.0)
+        @test MES.ScalingSettings().scale_wideintervals
 
         settings = MES.ScalingSettings()
         settings.coeff_lb = 0.0
@@ -49,6 +50,46 @@ include("direct_model_contract.jl")
     end
 
     test_direct_model_scaling(HiGHS.Optimizer)
+
+    @testset "interval constraints" begin
+        model = Model(HiGHS.Optimizer)
+        @variable(model, x)
+        con = @constraint(model, 1.0e-8 <= 1.0e-8 * x <= 1.0e-6)
+
+        @test MES.scale_constraints!(model) === nothing
+        @test JuMP.is_valid(model, con)
+        @test coefficient_values(con) == [1.0e-3]
+        interval = JuMP.constraint_object(con).set
+        @test interval.lower ≈ 1.0e-3
+        @test interval.upper ≈ 1.0e-1
+
+        proxy_model = Model(HiGHS.Optimizer)
+        @variable(proxy_model, x)
+        @variable(proxy_model, y)
+        proxy_con = @constraint(proxy_model, 1.0 <= 1.0e9 * x + 1.0e-9 * y <= 2.0)
+        @test MES.scale_constraints!(proxy_model) === nothing
+        @test JuMP.is_valid(proxy_model, proxy_con)
+        @test JuMP.normalized_coefficient(proxy_con, x) == 0.0
+        @test JuMP.normalized_coefficient(proxy_con, y) == 0.0
+
+        wide_model = Model(HiGHS.Optimizer)
+        @variable(wide_model, z)
+        wide_con = @constraint(wide_model, 1.0e-9 <= 1.0 * z <= 1.0e9)
+        expected_message = "Wide interval constraints where the LB and UB must be scaled differently constraints are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints."
+        error = try
+            MES.scale_constraints!(wide_model)
+            nothing
+        catch caught_error
+            caught_error
+        end
+        @test error isa ErrorException
+        @test startswith(sprint(showerror, error), expected_message)
+        @test occursin(string(wide_con), sprint(showerror, error))
+        @test JuMP.is_valid(wide_model, wide_con)
+        @test JuMP.constraint_object(wide_con).set.lower == 1.0e-9
+        @test MES.scale_constraints!(wide_model, MES.ScalingSettings(scale_wideintervals = false)) === nothing
+        @test JuMP.constraint_object(wide_con).set.upper == 1.0e9
+    end
 
     @testset "scaling inspection does not mutate a constraint expression" begin
         model = Model(HiGHS.Optimizer)

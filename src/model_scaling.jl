@@ -69,6 +69,8 @@ is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.GreaterThan}) = true
 
 is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.EqualTo}) = true
 
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.Interval}) = true
+
 is_scalar_affine_constraint(::ConstraintRef) = false
 
 is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.LessThan},<:ScalarShape}) = true
@@ -76,6 +78,8 @@ is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintInde
 is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.GreaterThan},<:ScalarShape}) = true
 
 is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.EqualTo},<:ScalarShape}) = true
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.Interval},<:ScalarShape}) = true
 
 @doc raw"""
     scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
@@ -118,6 +122,69 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     else
         scale_and_update_constraint!(con_ref, con_obj, rhs, scaling_settings)
     end
+    return nothing
+end
+
+@doc raw"""
+    scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
+
+Scale a scalar-affine interval constraint in place without changing its
+`ConstraintRef`. Wide intervals, whose bounds cannot share a scaling
+multiplier, are either skipped or rejected according to `scale_wideintervals`.
+"""
+function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.Interval},<:ScalarShape}, scaling_settings::ScalingSettings)
+    con_obj = constraint_object(con_ref)
+    interval = con_obj.set
+    multiplier = calc_interval_multiplier(interval, scaling_settings.rhs_lb, scaling_settings.rhs_ub)
+    if isnothing(multiplier)
+        if scaling_settings.scale_wideintervals
+            error("Wide interval constraints where the LB and UB must be scaled differently constraints are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints.\nConstraint: $(con_ref)")
+        end
+        return nothing
+    end
+    if multiplier != 1.0 || interval_coefficients_need_scaling(con_obj, multiplier, scaling_settings)
+        scale_and_update_terms!(con_ref, con_obj, multiplier, scaling_settings)
+    end
+    if multiplier != 1.0
+        set_interval_bounds!(con_ref, interval.lower * multiplier, interval.upper * multiplier)
+    end
+    return nothing
+end
+
+@doc raw"""
+    calc_interval_multiplier(interval::MOI.Interval, rhs_lb::Real, rhs_ub::Real)
+
+Return a positive multiplier that puts both nonzero interval bounds within the
+RHS range, or `nothing` if no common multiplier exists.
+"""
+function calc_interval_multiplier(interval::MOI.Interval, rhs_lb::Real, rhs_ub::Real)
+    multiplier_lb = 0.0
+    multiplier_ub = Inf
+    for bound in (interval.lower, interval.upper)
+        magnitude = abs(bound)
+        if magnitude > 0.0
+            multiplier_lb = max(multiplier_lb, rhs_lb / magnitude)
+            multiplier_ub = min(multiplier_ub, rhs_ub / magnitude)
+        end
+    end
+    if multiplier_lb > multiplier_ub
+        return nothing
+    end
+    return clamp(1.0, multiplier_lb, multiplier_ub)
+end
+
+function interval_coefficients_need_scaling(con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+    for coefficient in con_obj.func.terms.vals
+        scaled_magnitude = abs(coefficient * multiplier)
+        if scaled_magnitude > 0.0 && !(scaling_settings.coeff_lb <= scaled_magnitude <= scaling_settings.coeff_ub)
+            return true
+        end
+    end
+    return false
+end
+
+function set_interval_bounds!(con_ref::ConstraintRef, lower::Real, upper::Real)
+    MOI.set(owner_model(con_ref), MOI.ConstraintSet(), con_ref, MOI.Interval(lower, upper))
     return nothing
 end
 
@@ -196,22 +263,37 @@ Next, we iterate over the variable-coefficient pairs and scale them using proxy 
 The scaled variable-coefficient pairs are then applied to the original constraint in place.
 """
 function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, scaling_settings::ScalingSettings)
-    var_coeff_pairs = con_obj.func.terms
-    new_var_coeff_pairs = OrderedDict{VariableRef, Float64}()
-
     # First we want to check if we need to scale the RHS constant
     # We'd like to do this without making it impossible to scale some coefficients with proxy variables
     rhs_multiplier = calc_rhs_multiplier(con_obj, rhs, scaling_settings.rhs_lb, scaling_settings.rhs_ub, scaling_settings.coeff_lb, scaling_settings.coeff_ub)
 
+    scale_and_update_terms!(con_ref, con_obj, rhs_multiplier, scaling_settings)
+    if rhs_multiplier != 1.0
+        set_normalized_rhs(con_ref, rhs * rhs_multiplier)
+    end
+    return nothing
+end
+
+@doc raw"""
+    scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+
+Scale the terms in `con_obj` by `multiplier`, using proxy variables for terms
+which cannot be brought into the coefficient range with that multiplier.
+"""
+function scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+    var_coeff_pairs = con_obj.func.terms
+    new_var_coeff_pairs = OrderedDict{VariableRef, Float64}()
+
     for (var, coeff) in var_coeff_pairs
-        if coeff == 0.0 || (scaling_settings.coeff_lb <= (abs(coeff) * rhs_multiplier) <= scaling_settings.coeff_ub)
-            new_var_coeff_pairs[var] = coeff * rhs_multiplier
+        if coeff == 0.0 || (scaling_settings.coeff_lb <= (abs(coeff) * multiplier) <= scaling_settings.coeff_ub)
+            new_var_coeff_pairs[var] = coeff * multiplier
             continue
         end
-        (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * rhs_multiplier, scaling_settings)
+        (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * multiplier, scaling_settings)
         new_var_coeff_pairs[updated_var] = updated_coeff
     end
-    update_scaled_terms!(con_ref, var_coeff_pairs, new_var_coeff_pairs, rhs_multiplier, rhs)
+    update_scaled_terms!(con_ref, var_coeff_pairs, new_var_coeff_pairs)
+    return nothing
 end
 
 @doc raw"""
@@ -222,6 +304,14 @@ Only terms which changed, were added, or were removed are modified. This preserv
 identity and validity of `con_ref`.
 """
 function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs_multiplier::Real, rhs::Real)
+    update_scaled_terms!(con_ref, original_var_coeff_pairs, scaled_var_coeff_pairs)
+    if rhs_multiplier != 1.0
+        set_normalized_rhs(con_ref, rhs * rhs_multiplier)
+    end
+    return nothing
+end
+
+function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64})
     original_coefficients = Dict(original_var_coeff_pairs)
     variables = VariableRef[]
     coefficients = Float64[]
@@ -240,9 +330,6 @@ function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, 
     end
     if !isempty(variables)
         set_normalized_coefficient(fill(con_ref, length(variables)), variables, coefficients)
-    end
-    if rhs_multiplier != 1.0
-        set_normalized_rhs(con_ref, rhs * rhs_multiplier)
     end
     return nothing
 end

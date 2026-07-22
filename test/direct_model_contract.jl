@@ -9,6 +9,24 @@ function test_direct_model_scaling(optimizer_factory)
         @test collect(values(JuMP.constraint_object(con).func.terms)) == [1.0e6]
         @test JuMP.normalized_rhs(con) == 1.0e5
 
+        interval_model = direct_model(optimizer_factory())
+        supports_interval = JuMP.MOI.supports_constraint(
+            JuMP.backend(interval_model),
+            JuMP.MOI.ScalarAffineFunction{Float64},
+            JuMP.MOI.Interval{Float64},
+        )
+        if supports_interval
+            @variable(interval_model, interval_x)
+            interval_con = @constraint(interval_model, 1.0e-8 <= 1.0e-8 * interval_x <= 1.0e-6)
+            @test MacroEnergyScaling.scale_constraints!(interval_model) === nothing
+            @test JuMP.is_valid(interval_model, interval_con)
+            interval = JuMP.constraint_object(interval_con).set
+            @test interval.lower ≈ 1.0e-3
+            @test interval.upper ≈ 1.0e-1
+        else
+            @test_skip supports_interval
+        end
+
         function direct_mixed_scale_model()
             model = direct_model(optimizer_factory())
             @variable(model, x >= 0)

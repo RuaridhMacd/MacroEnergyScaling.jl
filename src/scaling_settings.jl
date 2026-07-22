@@ -10,6 +10,7 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
 - rhs_ub::Float64 = 1e6: Upper bound for the right-hand side scaling.
 - allow_recursion::Bool = true: Whether to allow recursion in the scaling algorithm.
 - scale_nonaffine::Bool = true: Whether to error when non-scalar-affine constraints are encountered.
+- scale_wideintervals::Bool = true: Whether to error when scalar-affine interval constraints require their bounds to be scaled differently.
 - proxy_var_ratio_ub::Float64 = 10.0: Upper bound for the ratio of proxy variables to variables.
 - proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}} = Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}(): A dictionary mapping variables to a vector of tuples of variables and scaling coefficients.
 """
@@ -21,10 +22,11 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     rhs_ub::Float64 = 1e6
     allow_recursion::Bool = true
     scale_nonaffine::Bool = true
+    scale_wideintervals::Bool = true
     proxy_var_ratio_ub::Float64 = 10.0  
     proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}} = Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}()
 
-    function ScalingSettings(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, proxy_var_ratio_ub, proxy_var_map)
+    function ScalingSettings(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_var_ratio_ub, proxy_var_map)
         coeff_lb = convert(Float64, coeff_lb)
         coeff_ub = convert(Float64, coeff_ub)
         min_coeff = convert(Float64, min_coeff)
@@ -32,10 +34,11 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
         rhs_ub = convert(Float64, rhs_ub)
         allow_recursion = convert(Bool, allow_recursion)
         scale_nonaffine = convert(Bool, scale_nonaffine)
+        scale_wideintervals = convert(Bool, scale_wideintervals)
         proxy_var_ratio_ub = convert(Float64, proxy_var_ratio_ub)
         proxy_var_map = convert(Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_map)
         validate_scaling_values(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, proxy_var_ratio_ub)
-        return new(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, proxy_var_ratio_ub, proxy_var_map)
+        return new(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_var_ratio_ub, proxy_var_map)
     end
 end
 
