@@ -2,7 +2,8 @@
 
 This directory contains microbenchmarks for the constraint-scaling paths. Model
 construction happens in BenchmarkTools' `setup` phase, so timings measure only
-`scale_constraints!`.
+`scale_constraints!`. The suite includes caching-model and HiGHS direct-model
+cases, plus a dense proxy-scaling case.
 
 From the repository root, initialize the dedicated benchmark environment once:
 
@@ -17,4 +18,6 @@ julia --project=benchmark benchmark/benchmarks.jl
 ```
 
 Set `MES_BENCHMARK_CONSTRAINTS` to change the number of constraints per case.
-BenchmarkTools reports elapsed time as well as allocations and allocated bytes.
+Set `MES_BENCHMARK_DENSE_TERMS` to change the number of terms in each dense
+constraint (default: 50). BenchmarkTools reports elapsed time as well as
+allocations and allocated bytes.
