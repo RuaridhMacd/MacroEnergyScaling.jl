@@ -4,6 +4,7 @@
 Scale the scalar-affine constraints in the model `EP` using the scaling settings `scaling_settings`.
 """
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
+    validate_scaling_settings(scaling_settings)
     constraint_types = list_of_constraint_types(EP)
     validate_constraint_types(constraint_types, EP, scaling_settings)
     for (function_type, set_type) in constraint_types
@@ -22,6 +23,7 @@ Scale the coefficients and RHS of the homogeneous constraint group `constraint_l
 using the scaling settings `scaling_settings`.
 """
 function scale_constraints!(constraint_list::AbstractVector{T}, scaling_settings::ScalingSettings=ScalingSettings()) where {T<:ConstraintRef}
+    validate_scaling_settings(scaling_settings)
     if isempty(constraint_list)
         return nothing
     end

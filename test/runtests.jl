@@ -11,6 +11,18 @@ function coefficient_values(con_ref)
 end
 
 @testset "MacroEnergyScaling" begin
+    @testset "scaling settings validation" begin
+        @test_throws ArgumentError MES.ScalingSettings(coeff_lb = 0.0)
+        @test_throws ArgumentError MES.ScalingSettings(coeff_lb = 2.0, coeff_ub = 1.0)
+        @test_throws ArgumentError MES.ScalingSettings(rhs_lb = 0.0)
+        @test_throws ArgumentError MES.ScalingSettings(min_coeff = 1.0e-2)
+        @test_throws ArgumentError MES.ScalingSettings(proxy_var_ratio_ub = 1.0)
+
+        settings = MES.ScalingSettings()
+        settings.coeff_lb = 0.0
+        @test_throws ArgumentError MES.scale_constraints!(Model(), settings)
+    end
+
     @testset "in-place scaling" begin
         model = Model(HiGHS.Optimizer)
         @variable(model, x)
