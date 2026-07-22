@@ -37,6 +37,17 @@ include("direct_model_contract.jl")
         @test JuMP.normalized_rhs(con) == 1.0e5
     end
 
+    @testset "batched in-place scaling" begin
+        model = Model(HiGHS.Optimizer)
+        @variable(model, x[1:2])
+        con = @constraint(model, 1.0e8 * x[1] + 1.0e8 * x[2] <= 1.0e7)
+
+        @test MES.scale_constraints!(model) === nothing
+        @test JuMP.is_valid(model, con)
+        @test coefficient_values(con) == [1.0e6, 1.0e6]
+        @test JuMP.normalized_rhs(con) == 1.0e5
+    end
+
     test_direct_model_scaling(HiGHS.Optimizer)
 
     @testset "scaling inspection does not mutate a constraint expression" begin

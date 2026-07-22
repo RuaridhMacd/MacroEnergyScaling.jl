@@ -107,21 +107,42 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     # If some coefficients are too large, and none too small
     # and dividing by max_ratio will not make any coefficients less than coeff_lb
     if max_ratio > 1 && min_ratio < 1 && min_ratio * max_ratio < 1
-        for (key, val) in con_obj.func.terms
-            set_normalized_coefficient(con_ref, key, val / max_ratio)
-        end
+        scale_constraint_terms!(con_ref, con_obj.func.terms, 1.0 / max_ratio)
         set_normalized_rhs(con_ref, rhs / max_ratio)
     # Else-if some coefficients are too small, and none too large
     # and multiplying by min_ratio will not make any coefficients greater than coeff_ub
     elseif min_ratio > 1 && max_ratio < 1 && max_ratio * min_ratio < 1
-        for (key, val) in con_obj.func.terms
-            set_normalized_coefficient(con_ref, key, val * min_ratio)
-        end
+        scale_constraint_terms!(con_ref, con_obj.func.terms, min_ratio)
         set_normalized_rhs(con_ref, rhs * min_ratio)
     # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
         scale_and_update_constraint!(con_ref, con_obj, rhs, scaling_settings)
     end
+    return nothing
+end
+
+@doc raw"""
+    scale_constraint_terms!(con_ref::ConstraintRef, terms, multiplier::Real)
+
+Multiply the coefficients in `terms` by `multiplier` in place. Multi-term
+constraints use JuMP's batched coefficient-update API; one-term constraints use
+the scalar API to avoid allocating batch vectors.
+"""
+function scale_constraint_terms!(con_ref::ConstraintRef, terms, multiplier::Real)
+    if isempty(terms)
+        return nothing
+    elseif length(terms) == 1
+        variable, coefficient = first(terms)
+        set_normalized_coefficient(con_ref, variable, coefficient * multiplier)
+        return nothing
+    end
+    variables = Vector{VariableRef}(undef, length(terms))
+    coefficients = Vector{Float64}(undef, length(terms))
+    for (index, (variable, coefficient)) in enumerate(terms)
+        variables[index] = variable
+        coefficients[index] = coefficient * multiplier
+    end
+    set_normalized_coefficient(fill(con_ref, length(terms)), variables, coefficients)
     return nothing
 end
 

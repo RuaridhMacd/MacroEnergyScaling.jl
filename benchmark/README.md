@@ -3,7 +3,7 @@
 This directory contains microbenchmarks for the constraint-scaling paths. Model
 construction happens in BenchmarkTools' `setup` phase, so timings measure only
 `scale_constraints!`. The suite includes caching-model and HiGHS direct-model
-cases, plus a dense proxy-scaling case.
+cases, plus dense in-place and proxy-scaling cases.
 
 From the repository root, initialize the dedicated benchmark environment once:
 

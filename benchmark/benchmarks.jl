@@ -30,6 +30,15 @@ function build_proxy_scaling_model(n::Integer, model=Model())
     return model
 end
 
+function build_dense_in_place_scaling_model(n::Integer, terms_per_constraint::Integer, model=Model())
+    @variable(model, x[1:terms_per_constraint])
+    expression = sum(1.0e8 * x[j] for j in 1:terms_per_constraint)
+    for _ in 1:n
+        @constraint(model, expression <= 1.0e7)
+    end
+    return model
+end
+
 function build_dense_proxy_scaling_model(n::Integer, terms_per_constraint::Integer, model=Model())
     @variable(model, x[1:terms_per_constraint])
     @variable(model, y[1:terms_per_constraint])
@@ -51,9 +60,11 @@ function scaling_benchmarks(n::Integer=100, terms_per_constraint::Integer=50)
     suite["already in range"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_in_range_model($n); settings = MES.ScalingSettings()) evals=1
     suite["in-place scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_in_place_scaling_model($n); settings = MES.ScalingSettings()) evals=1
     suite["proxy scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_proxy_scaling_model($n); settings = MES.ScalingSettings()) evals=1
+    suite["dense in-place scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_dense_in_place_scaling_model($n, $terms_per_constraint); settings = MES.ScalingSettings()) evals=1
     suite["dense proxy scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_dense_proxy_scaling_model($n, $terms_per_constraint); settings = MES.ScalingSettings()) evals=1
     suite["direct already in range"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_in_range_model($n, build_direct_model()); settings = MES.ScalingSettings()) evals=1
     suite["direct in-place scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_in_place_scaling_model($n, build_direct_model()); settings = MES.ScalingSettings()) evals=1
+    suite["direct dense in-place scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_dense_in_place_scaling_model($n, $terms_per_constraint, build_direct_model()); settings = MES.ScalingSettings()) evals=1
     suite["direct proxy scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_proxy_scaling_model($n, build_direct_model()); settings = MES.ScalingSettings()) evals=1
     return suite
 end
