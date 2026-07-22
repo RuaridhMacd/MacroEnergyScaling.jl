@@ -75,7 +75,7 @@ include("direct_model_contract.jl")
         wide_model = Model(HiGHS.Optimizer)
         @variable(wide_model, z)
         wide_con = @constraint(wide_model, 1.0e-9 <= 1.0 * z <= 1.0e9)
-        expected_message = "Wide interval constraints where the LB and UB must be scaled differently constraints are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints."
+        expected_message = "Wide interval constraints where the LB and UB must be scaled differently are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints."
         error = try
             MES.scale_constraints!(wide_model)
             nothing

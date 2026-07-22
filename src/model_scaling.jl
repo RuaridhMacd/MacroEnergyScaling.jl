@@ -138,7 +138,7 @@ function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.Constrai
     multiplier = calc_interval_multiplier(interval, scaling_settings.rhs_lb, scaling_settings.rhs_ub)
     if isnothing(multiplier)
         if scaling_settings.scale_wideintervals
-            error("Wide interval constraints where the LB and UB must be scaled differently constraints are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints.\nConstraint: $(con_ref)")
+            error("Wide interval constraints where the LB and UB must be scaled differently are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints.\nConstraint: $(con_ref)")
         end
         return nothing
     end
