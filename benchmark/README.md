@@ -7,13 +7,13 @@ construction happens in BenchmarkTools' `setup` phase, so timings measure only
 From the repository root, initialize the dedicated benchmark environment once:
 
 ```sh
-/Users/rmacd/.juliaup/bin/julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
+julia --project=benchmark -e 'using Pkg; Pkg.instantiate()'
 ```
 
 Then run the benchmark suite:
 
 ```sh
-/Users/rmacd/.juliaup/bin/julia --project=benchmark benchmark/benchmarks.jl
+julia --project=benchmark benchmark/benchmarks.jl
 ```
 
 Set `MES_BENCHMARK_CONSTRAINTS` to change the number of constraints per case.

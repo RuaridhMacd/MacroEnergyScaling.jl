@@ -10,6 +10,8 @@ function coefficient_values(con_ref)
     return collect(values(terms))
 end
 
+include("direct_model_contract.jl")
+
 @testset "MacroEnergyScaling" begin
     @testset "scaling settings validation" begin
         @test_throws ArgumentError MES.ScalingSettings(coeff_lb = 0.0)
@@ -34,6 +36,8 @@ end
         @test coefficient_values(con) == [1.0e6]
         @test JuMP.normalized_rhs(con) == 1.0e5
     end
+
+    test_direct_model_scaling(HiGHS.Optimizer)
 
     @testset "scaling inspection does not mutate a constraint expression" begin
         model = Model(HiGHS.Optimizer)
