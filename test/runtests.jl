@@ -10,6 +10,11 @@ function coefficient_values(con_ref)
     return collect(values(terms))
 end
 
+function objective_coefficient(model, variable)
+    objective = JuMP.objective_function(model, JuMP.AffExpr)
+    return get(objective.terms, variable, 0.0)
+end
+
 include("direct_model_contract.jl")
 
 @testset "MacroEnergyScaling" begin
@@ -19,7 +24,25 @@ include("direct_model_contract.jl")
         @test_throws ArgumentError MES.ScalingSettings(rhs_lb = 0.0)
         @test_throws ArgumentError MES.ScalingSettings(min_coeff = 1.0e-2)
         @test_throws ArgumentError MES.ScalingSettings(proxy_var_ratio_ub = 1.0)
+        @test_throws ArgumentError MES.ScalingSettings(objective_coeff_lb = 0.0)
+        @test_throws ArgumentError MES.ScalingSettings(objective_min_coeff = 1.0e-2)
         @test MES.ScalingSettings().scale_wideintervals
+        @test MES.ScalingSettings().objective_min_coeff == 0.0
+
+        legacy_settings = MES.ScalingSettings(
+            1.0e-3,
+            1.0e6,
+            1.0e-9,
+            1.0e-3,
+            1.0e6,
+            true,
+            true,
+            true,
+            10.0,
+            Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}(),
+        )
+        @test legacy_settings.objective_coeff_lb == 1.0e-3
+        @test legacy_settings.objective_coeff_ub == 1.0e6
 
         settings = MES.ScalingSettings()
         settings.coeff_lb = 0.0
@@ -50,6 +73,87 @@ include("direct_model_contract.jl")
     end
 
     test_direct_model_scaling(HiGHS.Optimizer)
+
+    @testset "objective scaling" begin
+        model = Model(HiGHS.Optimizer)
+        @variable(model, x)
+        @variable(model, y)
+        @objective(model, Min, 1.0e9 * x - 1.0e-9 * y + 7.0)
+
+        @test MES.scale_objective!(model) === nothing
+        objective = JuMP.objective_function(model, JuMP.AffExpr)
+        @test objective.constant == 7.0
+        @test objective_coefficient(model, x) == 0.0
+        @test objective_coefficient(model, y) == 0.0
+        @test all(1.0e-3 <= abs(coeff) <= 1.0e6 for coeff in values(objective.terms))
+
+        variable_model = Model()
+        @variable(variable_model, variable_x)
+        @objective(variable_model, Min, 1.0e9 * variable_x)
+        @test MES.scale_objective!(variable_model) === nothing
+        @test objective_coefficient(variable_model, variable_x) == 0.0
+
+        constant_model = Model()
+        @variable(constant_model, constant_x)
+        @objective(constant_model, Min, 7.0)
+        @test MES.scale_objective!(constant_model) === nothing
+        @test JuMP.objective_function(constant_model, JuMP.AffExpr).constant == 7.0
+        @test JuMP.num_variables(constant_model) == 1
+
+        prune_model = Model()
+        @variable(prune_model, prune_x)
+        @variable(prune_model, prune_y)
+        @objective(prune_model, Min, 1.0e-12 * prune_x + 2.0 * prune_y + 7.0)
+        prune_settings = MES.ScalingSettings(objective_min_coeff = 1.0e-9)
+        @test MES.scale_objective!(prune_model, prune_settings) === nothing
+        @test objective_coefficient(prune_model, prune_x) == 0.0
+        @test objective_coefficient(prune_model, prune_y) == 2.0
+        @test JuMP.objective_function(prune_model, JuMP.AffExpr).constant == 7.0
+
+        reuse_model = Model()
+        @variable(reuse_model, reuse_x)
+        reuse_settings = MES.ScalingSettings()
+        @objective(reuse_model, Min, 1.0e-9 * reuse_x)
+        MES.scale_objective!(reuse_model, reuse_settings)
+        first_proxy = only(reuse_settings.proxy_var_map[reuse_x])[1]
+        @objective(reuse_model, Min, 2.0e-9 * reuse_x)
+        MES.scale_objective!(reuse_model, reuse_settings)
+        @test JuMP.num_variables(reuse_model) == 2
+        @test objective_coefficient(reuse_model, first_proxy) == 2.0e-3
+
+        function objective_scale_model()
+            objective_model = Model(HiGHS.Optimizer)
+            @variable(objective_model, objective_x >= 0)
+            @variable(objective_model, objective_y >= 0)
+            @constraint(objective_model, objective_x + objective_y >= 1.0)
+            @objective(objective_model, Min, 1.0e9 * objective_x + 1.0e-9 * objective_y + 3.0)
+            return objective_model, objective_x, objective_y
+        end
+        original, original_x, original_y = objective_scale_model()
+        optimize!(original)
+        original_objective = objective_value(original)
+        scaled, scaled_x, scaled_y = objective_scale_model()
+        workflow_settings = MES.ScalingSettings()
+        MES.scale_objective!(scaled, workflow_settings)
+        MES.scale_constraints!(scaled, workflow_settings)
+        optimize!(scaled)
+        @test isapprox(objective_value(scaled), original_objective; atol = 1.0e-8)
+        @test isapprox(value(scaled_x), value(original_x); atol = 1.0e-8)
+        @test isapprox(value(scaled_y), value(original_y); atol = 1.0e-8)
+
+        feasibility_model = Model()
+        @test MES.scale_objective!(feasibility_model) === nothing
+
+        quadratic_model = Model()
+        @variable(quadratic_model, quadratic_x)
+        @objective(quadratic_model, Min, quadratic_x^2)
+        @test_throws ErrorException MES.scale_objective!(quadratic_model)
+
+        nonlinear_model = Model()
+        @variable(nonlinear_model, nonlinear_x)
+        @objective(nonlinear_model, Min, sin(nonlinear_x))
+        @test_throws ErrorException MES.scale_objective!(nonlinear_model)
+    end
 
     @testset "interval constraints" begin
         model = Model(HiGHS.Optimizer)

@@ -9,6 +9,14 @@ function test_direct_model_scaling(optimizer_factory)
         @test collect(values(JuMP.constraint_object(con).func.terms)) == [1.0e6]
         @test JuMP.normalized_rhs(con) == 1.0e5
 
+        objective_model = direct_model(optimizer_factory())
+        @variable(objective_model, objective_x)
+        @objective(objective_model, Min, 1.0e8 * objective_x)
+        @test MacroEnergyScaling.scale_objective!(objective_model) === nothing
+        objective = JuMP.objective_function(objective_model, JuMP.AffExpr)
+        @test !haskey(objective.terms, objective_x)
+        @test all(1.0e-3 <= abs(coefficient) <= 1.0e6 for coefficient in values(objective.terms))
+
         interval_model = direct_model(optimizer_factory())
         supports_interval = JuMP.MOI.supports_constraint(
             JuMP.backend(interval_model),
