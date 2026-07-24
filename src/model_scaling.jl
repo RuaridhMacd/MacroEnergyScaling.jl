@@ -1,36 +1,85 @@
 @doc raw"""
     scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
 
-Scale the coefficients and RHS of all constraints in the model `EP` using the scaling settings `scaling_settings`.
-This function creates an array of all constraints in `EP` and then broadcasts scale_constraint!(con_ref, scaling_settings) on the array.
+Scale the scalar-affine constraints in the model `EP` using the scaling settings `scaling_settings`.
 """
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
-    con_list = all_constraints(EP; include_variable_in_set_constraints=false)
-    action_count = scale_constraint!.(con_list, Ref(scaling_settings));
-    if scaling_settings.count_actions
-        return sum(action_count)
-    else
-        return nothing
+    validate_scaling_settings(scaling_settings)
+    constraint_types = list_of_constraint_types(EP)
+    validate_constraint_types(constraint_types, EP, scaling_settings)
+    for (function_type, set_type) in constraint_types
+        if is_scalar_affine_constraint(function_type, set_type)
+            con_list = all_constraints(EP, function_type, set_type)
+            scale_constraints!(con_list, scaling_settings)
+        end
     end
+    return nothing
 end
 
 @doc raw"""
-    scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
+    scale_constraints!(constraint_list::AbstractVector{<:ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
 
-Scale the coefficients and RHS of all constraints in the model `EP` using the scaling settings `scaling_settings`.
-This function calls scale_constraint!(con_ref, scaling_settings) on each constraint in `constraint_list`.
+Scale the coefficients and RHS of the homogeneous constraint group `constraint_list`
+using the scaling settings `scaling_settings`.
 """
-function scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
-    action_count = 0
-    for con_ref in constraint_list
-        action_count += scale_constraint!(con_ref, scaling_settings)
-    end
-    if scaling_settings.count_actions
-        return action_count
-    else
+function scale_constraints!(constraint_list::AbstractVector{T}, scaling_settings::ScalingSettings=ScalingSettings()) where {T<:ConstraintRef}
+    validate_scaling_settings(scaling_settings)
+    if isempty(constraint_list)
         return nothing
     end
+    if !isconcretetype(T)
+        throw(ArgumentError("constraint_list must have a concrete, homogeneous ConstraintRef element type. Pass constraints grouped by JuMP constraint type."))
+    end
+    if !is_scalar_affine_constraint(first(constraint_list))
+        if scaling_settings.scale_nonaffine
+            error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
+        end
+        return nothing
+    end
+    for con_ref in constraint_list
+        scale_constraint!(con_ref, scaling_settings)
+    end
+    return nothing
 end
+
+@doc raw"""
+    validate_constraint_types(constraint_types, EP::Model, scaling_settings::ScalingSettings)
+
+Validate that `constraint_types` and the nonlinear constraints in `EP` are supported.
+"""
+function validate_constraint_types(constraint_types, EP::Model, scaling_settings::ScalingSettings)
+    if scaling_settings.scale_nonaffine && num_nonlinear_constraints(EP) > 0
+        error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
+    end
+    if scaling_settings.scale_nonaffine
+        for (function_type, set_type) in constraint_types
+            if function_type != VariableRef && !is_scalar_affine_constraint(function_type, set_type)
+                error("Non-scalar-affine constraints are not currently supported by MacroEnergyScaling. Set scale_nonaffine = false to skip these constraints")
+            end
+        end
+    end
+    return nothing
+end
+
+is_scalar_affine_constraint(::Type, ::Type) = false
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.LessThan}) = true
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.GreaterThan}) = true
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.EqualTo}) = true
+
+is_scalar_affine_constraint(::Type{<:AffExpr}, ::Type{<:MOI.Interval}) = true
+
+is_scalar_affine_constraint(::ConstraintRef) = false
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.LessThan},<:ScalarShape}) = true
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.GreaterThan},<:ScalarShape}) = true
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.EqualTo},<:ScalarShape}) = true
+
+is_scalar_affine_constraint(::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.Interval},<:ScalarShape}) = true
 
 @doc raw"""
     scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
@@ -39,79 +88,242 @@ Scale the coefficients and RHS of the constraint `con_ref` using the scaling set
 `con_ref` is a JuMP constraint reference.
 """
 function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
-    action_count = 0
-
     coeff_lb = scaling_settings.coeff_lb
     coeff_ub = scaling_settings.coeff_ub
 
     con_obj = constraint_object(con_ref)
-    coefficients = abs.(append!(con_obj.func.terms.vals, normalized_rhs(con_ref)))
-    coefficients = coefficients[coefficients .> 0] # Ignore coefficients which equal zero
-
-    if length(coefficients) == 0
-        return action_count
+    rhs = normalized_rhs(con_ref)
+    has_nonzero_coefficient, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
+    if !has_nonzero_coefficient
+        return nothing
     end
 
     # If all the coefficients are within the bounds, we don't need to do anything
-    if all(coeff_lb .<= coefficients .<= coeff_ub)
-        return action_count
+    if coeff_lb <= min_coefficient && max_coefficient <= coeff_ub
+        return nothing
     end
 
     # Find the ratio of the maximum and minimum coefficients to the bounds
     # A value > 1 for either indicates that the coefficients are too large or too small
-    max_ratio = maximum(coefficients) / coeff_ub
-    min_ratio = coeff_lb / minimum(coefficients)
+    max_ratio = max_coefficient / coeff_ub
+    min_ratio = coeff_lb / min_coefficient
 
     # If some coefficients are too large, and none too small
     # and dividing by max_ratio will not make any coefficients less than coeff_lb
     if max_ratio > 1 && min_ratio < 1 && min_ratio * max_ratio < 1
-        for (key, val) in con_obj.func.terms
-            set_normalized_coefficient(con_ref, key, val / max_ratio)
-        end
-        set_normalized_rhs(con_ref, normalized_rhs(con_ref) / max_ratio)
-        action_count += 1
+        scale_constraint_terms!(con_ref, con_obj.func.terms, 1.0 / max_ratio)
+        set_normalized_rhs(con_ref, rhs / max_ratio)
     # Else-if some coefficients are too small, and none too large
     # and multiplying by min_ratio will not make any coefficients greater than coeff_ub
     elseif min_ratio > 1 && max_ratio < 1 && max_ratio * min_ratio < 1
-        for (key, val) in con_obj.func.terms
-            set_normalized_coefficient(con_ref, key, val * min_ratio)
-        end
-        set_normalized_rhs(con_ref, normalized_rhs(con_ref) * min_ratio)
-        action_count += 1
-    # Else we'll recreate the constraint with proxy variables to scale the coefficients one-by-one
+        scale_constraint_terms!(con_ref, con_obj.func.terms, min_ratio)
+        set_normalized_rhs(con_ref, rhs * min_ratio)
+    # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
-        scale_and_remake_constraint(con_ref, scaling_settings)
-        action_count += 1
+        scale_and_update_constraint!(con_ref, con_obj, rhs, scaling_settings)
     end
-    return action_count
+    return nothing
 end
 
 @doc raw"""
-    scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
+    scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
 
-Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`.
+Scale a scalar-affine interval constraint in place without changing its
+`ConstraintRef`. Wide intervals, whose bounds cannot share a scaling
+multiplier, are either skipped or rejected according to `scale_wideintervals`.
+"""
+function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.ConstraintIndex{<:MOI.ScalarAffineFunction,<:MOI.Interval},<:ScalarShape}, scaling_settings::ScalingSettings)
+    con_obj = constraint_object(con_ref)
+    interval = con_obj.set
+    multiplier = calc_interval_multiplier(interval, scaling_settings.rhs_lb, scaling_settings.rhs_ub)
+    if isnothing(multiplier)
+        if scaling_settings.scale_wideintervals
+            error("Wide interval constraints where the LB and UB must be scaled differently are not currently supported by MacroEnergyScaling. Set scale_wideintervals = false to skip these constraints or break them into two one-sided constraints.\nConstraint: $(con_ref)")
+        end
+        return nothing
+    end
+    if multiplier != 1.0 || interval_coefficients_need_scaling(con_obj, multiplier, scaling_settings)
+        scale_and_update_terms!(con_ref, con_obj, multiplier, scaling_settings)
+    end
+    if multiplier != 1.0
+        set_interval_bounds!(con_ref, interval.lower * multiplier, interval.upper * multiplier)
+    end
+    return nothing
+end
+
+@doc raw"""
+    calc_interval_multiplier(interval::MOI.Interval, rhs_lb::Real, rhs_ub::Real)
+
+Return a positive multiplier that puts both nonzero interval bounds within the
+RHS range, or `nothing` if no common multiplier exists.
+"""
+function calc_interval_multiplier(interval::MOI.Interval, rhs_lb::Real, rhs_ub::Real)
+    multiplier_lb = 0.0
+    multiplier_ub = Inf
+    for bound in (interval.lower, interval.upper)
+        magnitude = abs(bound)
+        if magnitude > 0.0
+            multiplier_lb = max(multiplier_lb, rhs_lb / magnitude)
+            multiplier_ub = min(multiplier_ub, rhs_ub / magnitude)
+        end
+    end
+    if multiplier_lb > multiplier_ub
+        return nothing
+    end
+    return clamp(1.0, multiplier_lb, multiplier_ub)
+end
+
+function interval_coefficients_need_scaling(con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+    for coefficient in con_obj.func.terms.vals
+        scaled_magnitude = abs(coefficient * multiplier)
+        if scaled_magnitude > 0.0 && !(scaling_settings.coeff_lb <= scaled_magnitude <= scaling_settings.coeff_ub)
+            return true
+        end
+    end
+    return false
+end
+
+function set_interval_bounds!(con_ref::ConstraintRef, lower::Real, upper::Real)
+    MOI.set(owner_model(con_ref), MOI.ConstraintSet(), con_ref, MOI.Interval(lower, upper))
+    return nothing
+end
+
+@doc raw"""
+    scale_constraint_terms!(con_ref::ConstraintRef, terms, multiplier::Real)
+
+Multiply the coefficients in `terms` by `multiplier` in place. Multi-term
+constraints use JuMP's batched coefficient-update API; one-term constraints use
+the scalar API to avoid allocating batch vectors.
+"""
+function scale_constraint_terms!(con_ref::ConstraintRef, terms, multiplier::Real)
+    if isempty(terms)
+        return nothing
+    elseif length(terms) == 1
+        variable, coefficient = first(terms)
+        set_normalized_coefficient(con_ref, variable, coefficient * multiplier)
+        return nothing
+    end
+    variables = Vector{VariableRef}(undef, length(terms))
+    coefficients = Vector{Float64}(undef, length(terms))
+    for (index, (variable, coefficient)) in enumerate(terms)
+        variables[index] = variable
+        coefficients[index] = coefficient * multiplier
+    end
+    set_normalized_coefficient(fill(con_ref, length(terms)), variables, coefficients)
+    return nothing
+end
+
+@doc raw"""
+    nonzero_coefficient_extrema(con_obj, rhs)
+
+Return whether a nonzero coefficient was found, followed by the smallest and
+largest nonzero coefficient magnitudes in `con_obj`, including `rhs`.
+"""
+function nonzero_coefficient_extrema(con_obj, rhs)
+    min_coefficient = Inf
+    max_coefficient = 0.0
+    has_nonzero_coefficient = false
+    for coefficient in con_obj.func.terms.vals
+        magnitude = abs(coefficient)
+        if magnitude > 0.0
+            if !has_nonzero_coefficient
+                has_nonzero_coefficient = true
+                min_coefficient = magnitude
+                max_coefficient = magnitude
+            elseif magnitude < min_coefficient
+                min_coefficient = magnitude
+            elseif magnitude > max_coefficient
+                max_coefficient = magnitude
+            end
+        end
+    end
+    rhs_magnitude = abs(rhs)
+    if rhs_magnitude > 0.0
+        if !has_nonzero_coefficient
+            has_nonzero_coefficient = true
+            min_coefficient = rhs_magnitude
+            max_coefficient = rhs_magnitude
+        elseif rhs_magnitude < min_coefficient
+            min_coefficient = rhs_magnitude
+        elseif rhs_magnitude > max_coefficient
+            max_coefficient = rhs_magnitude
+        end
+    end
+    return has_nonzero_coefficient, min_coefficient, max_coefficient
+end
+
+@doc raw"""
+    scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, scaling_settings::ScalingSettings)
+
+Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`
+without changing its `ConstraintRef`.
 
 First we check if we can scale the right-hand side constant without creating proxy variables.
 Next, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
-The original constraint is then replaced with a new constraint using the scaled variable-coefficient pairs.
+The scaled variable-coefficient pairs are then applied to the original constraint in place.
 """
-function scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
-    var_coeff_pairs = constraint_object(con_ref).func.terms
-    new_var_coeff_pairs = OrderedDict{VariableRef, Float64}()
-
+function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, scaling_settings::ScalingSettings)
     # First we want to check if we need to scale the RHS constant
     # We'd like to do this without making it impossible to scale some coefficients with proxy variables
-    rhs_multiplier = calc_rhs_multiplier(con_ref, scaling_settings.rhs_lb, scaling_settings.rhs_ub, scaling_settings.coeff_lb, scaling_settings.coeff_ub)
+    rhs_multiplier = calc_rhs_multiplier(con_obj, rhs, scaling_settings.rhs_lb, scaling_settings.rhs_ub, scaling_settings.coeff_lb, scaling_settings.coeff_ub)
+
+    scale_and_update_terms!(con_ref, con_obj, rhs_multiplier, scaling_settings)
+    if rhs_multiplier != 1.0
+        set_normalized_rhs(con_ref, rhs * rhs_multiplier)
+    end
+    return nothing
+end
+
+@doc raw"""
+    scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+
+Scale the terms in `con_obj` by `multiplier`, using proxy variables for terms
+which cannot be brought into the coefficient range with that multiplier.
+"""
+function scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+    var_coeff_pairs = con_obj.func.terms
+    new_var_coeff_pairs = OrderedDict{VariableRef, Float64}()
 
     for (var, coeff) in var_coeff_pairs
-        if coeff == 0.0 || (scaling_settings.coeff_lb <= (abs(coeff) * rhs_multiplier) <= scaling_settings.coeff_ub)
-            new_var_coeff_pairs[var] = coeff * rhs_multiplier
+        if coeff == 0.0 || (scaling_settings.coeff_lb <= (abs(coeff) * multiplier) <= scaling_settings.coeff_ub)
+            new_var_coeff_pairs[var] = coeff * multiplier
             continue
         end
-        (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * rhs_multiplier, scaling_settings)
+        (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * multiplier, scaling_settings)
         new_var_coeff_pairs[updated_var] = updated_coeff
     end
-    replace_constraint!(con_ref, new_var_coeff_pairs, rhs_multiplier)
+    update_scaled_terms!(con_ref, var_coeff_pairs, new_var_coeff_pairs)
+    return nothing
+end
+
+@doc raw"""
+    update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64})
+
+Update the terms of `con_ref` in place using the scaled variable-coefficient pairs.
+Only terms which changed, were added, or were removed are modified. This preserves the
+identity and validity of `con_ref`.
+"""
+function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, scaled_var_coeff_pairs::AbstractDict{VariableRef, Float64})
+    original_coefficients = Dict(original_var_coeff_pairs)
+    variables = VariableRef[]
+    coefficients = Float64[]
+    for (var, scaled_coeff) in scaled_var_coeff_pairs
+        if !haskey(original_coefficients, var) || original_coefficients[var] != scaled_coeff
+            push!(variables, var)
+            push!(coefficients, scaled_coeff)
+        end
+        delete!(original_coefficients, var)
+    end
+    for (var, original_coeff) in original_coefficients
+        if original_coeff != 0.0
+            push!(variables, var)
+            push!(coefficients, 0.0)
+        end
+    end
+    if !isempty(variables)
+        set_normalized_coefficient(fill(con_ref, length(variables)), variables, coefficients)
+    end
+    return nothing
 end
 
 @doc raw"""
@@ -163,23 +375,22 @@ function prune_coefficients(new_coeff::Real, coeff::Real, multiplier::Real)
 end
 
 @doc raw"""
-    calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
+    calc_rhs_multiplier(con_obj, rhs::Real, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
 
-Calculate the multiplier to scale the right-hand side of the constraint `con_ref` to be within the bounds `rhs_lb` and `rhs_ub`.
+Calculate the multiplier that keeps `rhs` compatible with the coefficient bounds in `con_obj` and the RHS bounds `rhs_lb` and `rhs_ub`.
 """
-function calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
-    rhs = normalized_rhs(con_ref)
+function calc_rhs_multiplier(con_obj, rhs::Real, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
+    iszero(rhs) && return 1.0
     abs_rhs = abs(rhs)
-    if rhs_lb < abs_rhs < rhs_ub
+    if rhs_lb <= abs_rhs <= rhs_ub
         return 1.0
     end
-    coeff_and_rhs = abs.(append!(constraint_object(con_ref).func.terms.vals, rhs))
-    coeff_and_rhs = coeff_and_rhs[coeff_and_rhs .> 0] # Ignore coefficients which equal zero
+    _, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
     if abs_rhs > rhs_ub
-        return maximum([1.0 / abs_rhs, coeff_lb / coeff_ub / minimum(coeff_and_rhs)])
+        return max(1.0 / abs_rhs, coeff_lb / coeff_ub / min_coefficient)
     end
     if abs_rhs < rhs_lb
-        return minimum([1.0 / abs_rhs, coeff_ub / coeff_lb / maximum(coeff_and_rhs)])
+        return min(1.0 / abs_rhs, coeff_ub / coeff_lb / max_coefficient)
     end
 end
 
@@ -252,69 +463,4 @@ function make_proxy_var(var::VariableRef, multiplier::Real)
     end
     @constraint(model, var == proxy_var * multiplier)
     return proxy_var
-end
-
-@doc raw"""
-    replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rhs_multiplier::Real=1.0)
-
-Replace the constraint `con_ref` with a new constraint with the given variable-coefficient pairs and right-hand side multiplier.
-"""
-function replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rhs_multiplier::Real=1.0)
-    con_obj = constraint_object(con_ref)
-    con_name = name(con_ref)
-    model = con_ref.model
-    delete(model, con_ref)
-    unregister(model, Symbol(con_name))
-    if isnothing(var_coeff_pairs)
-        _ = make_constraint(model, con_obj.func.terms, con_obj.set, con_name, rhs_multiplier)
-    else
-        _ = make_constraint(model, var_coeff_pairs, con_obj.set, con_name, rhs_multiplier)
-    end
-    return nothing
-end
-
-@doc raw"""
-    make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs::MOI.AbstractScalarSet, con_name::AbstractString, rhs_multiplier::Real=1.0)
-
-Create a new constraint with the given variable-coefficient pairs, right-hand side, and name; then add it to the model `EP`.
-"""
-function make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs::MOI.AbstractScalarSet, con_name::AbstractString, rhs_multiplier::Real=1.0)
-    expr = AffExpr()
-    for (var, coeff) in var_coeff_pairs
-        add_to_expression!(expr, var, coeff)
-    end
-    new_con = @constraint(EP, expr in rhs; base_name=con_name)
-    if rhs_multiplier != 1.0
-        set_normalized_rhs(new_con, normalized_rhs(new_con) * rhs_multiplier)
-    end
-    name, indices = parse_constraint_name(con_name)
-    if indices === nothing
-        EP[Symbol(name)] = new_con
-    else
-        EP[Symbol(name)][indices...] = new_con
-    end
-    return new_con
-end
-
-@doc raw"""
-    parse_constraint_name(input::AbstractString)
-
-Parse the name of a constraint and return the name and indexes as a tuple.
-"""
-function parse_constraint_name(input::AbstractString)
-    # Find the position of the opening bracket '['
-    open_bracket_pos = findfirst(isequal('['), input)
-    if open_bracket_pos === nothing
-        # No brackets found, return the whole string as the name
-        return input, nothing
-    end
-    # Extract the name part
-    name = input[1:open_bracket_pos-1]
-    # Extract the indexes part
-    indexes_part = input[open_bracket_pos+1:end-1]  # Remove the closing bracket ']'
-    # Split the indexes part by comma
-    indexes = split(indexes_part, ',')
-    # Parse the indexes as integers
-    parsed_indexes = [parse(Int, index) for index in indexes]
-    return name, parsed_indexes
 end
