@@ -1,6 +1,7 @@
 module MacroEnergyScaling
 
 export scale_constraints!
+export scale_objective!
 export get_scaling_settings
 
 using JuMP
@@ -12,5 +13,6 @@ src_dir = @__DIR__
 
 include(joinpath(src_dir, "scaling_settings.jl"))
 include(joinpath(src_dir, "model_scaling.jl"))
+include(joinpath(src_dir, "objective_scaling.jl"))
 
 end

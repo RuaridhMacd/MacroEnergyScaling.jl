@@ -13,6 +13,9 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
 - scale_wideintervals::Bool = true: Whether to error when scalar-affine interval constraints require their bounds to be scaled differently.
 - proxy_var_ratio_ub::Float64 = 10.0: Upper bound for the ratio of proxy variables to variables.
 - proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}} = Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}(): A dictionary mapping variables to a vector of tuples of variables and scaling coefficients.
+- objective_coeff_lb::Float64 = 1e-3: Lower bound for objective coefficients.
+- objective_coeff_ub::Float64 = 1e6: Upper bound for objective coefficients.
+- objective_min_coeff::Float64 = 0.0: Objective coefficients with a smaller absolute value are dropped before scaling.
 """
 @Base.kwdef mutable struct ScalingSettings
     coeff_lb::Float64 = 1e-3
@@ -25,8 +28,11 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     scale_wideintervals::Bool = true
     proxy_var_ratio_ub::Float64 = 10.0  
     proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}} = Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}()
+    objective_coeff_lb::Float64 = 1e-3
+    objective_coeff_ub::Float64 = 1e6
+    objective_min_coeff::Float64 = 0.0
 
-    function ScalingSettings(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_var_ratio_ub, proxy_var_map)
+    function ScalingSettings(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_var_ratio_ub, proxy_var_map, objective_coeff_lb=1e-3, objective_coeff_ub=1e6, objective_min_coeff=0.0)
         coeff_lb = convert(Float64, coeff_lb)
         coeff_ub = convert(Float64, coeff_ub)
         min_coeff = convert(Float64, min_coeff)
@@ -37,9 +43,24 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
         scale_wideintervals = convert(Bool, scale_wideintervals)
         proxy_var_ratio_ub = convert(Float64, proxy_var_ratio_ub)
         proxy_var_map = convert(Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_map)
+        objective_coeff_lb = convert(Float64, objective_coeff_lb)
+        objective_coeff_ub = convert(Float64, objective_coeff_ub)
+        objective_min_coeff = convert(Float64, objective_min_coeff)
         validate_scaling_values(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, proxy_var_ratio_ub)
-        return new(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_var_ratio_ub, proxy_var_map)
+        validate_objective_scaling_values(objective_coeff_lb, objective_coeff_ub, objective_min_coeff)
+        return new(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_var_ratio_ub, proxy_var_map, objective_coeff_lb, objective_coeff_ub, objective_min_coeff)
     end
+end
+
+function validate_objective_scaling_values(objective_coeff_lb::Float64, objective_coeff_ub::Float64, objective_min_coeff::Float64)
+    if !all(isfinite, (objective_coeff_lb, objective_coeff_ub, objective_min_coeff))
+        throw(ArgumentError("Objective scaling settings must be finite."))
+    elseif objective_coeff_lb <= 0.0 || objective_coeff_lb > objective_coeff_ub
+        throw(ArgumentError("objective_coeff_lb must be positive and no greater than objective_coeff_ub."))
+    elseif objective_min_coeff < 0.0 || objective_min_coeff > objective_coeff_lb
+        throw(ArgumentError("objective_min_coeff must be nonnegative and no greater than objective_coeff_lb."))
+    end
+    return nothing
 end
 
 function validate_scaling_values(coeff_lb::Float64, coeff_ub::Float64, min_coeff::Float64, rhs_lb::Float64, rhs_ub::Float64, proxy_var_ratio_ub::Float64)
@@ -65,6 +86,11 @@ function validate_scaling_settings(scaling_settings::ScalingSettings)
         scaling_settings.rhs_lb,
         scaling_settings.rhs_ub,
         scaling_settings.proxy_var_ratio_ub,
+    )
+    validate_objective_scaling_values(
+        scaling_settings.objective_coeff_lb,
+        scaling_settings.objective_coeff_ub,
+        scaling_settings.objective_min_coeff,
     )
     return nothing
 end
