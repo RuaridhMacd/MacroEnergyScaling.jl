@@ -26,8 +26,10 @@ include("direct_model_contract.jl")
         @test_throws ArgumentError MES.ScalingSettings(proxy_var_ratio_ub = 1.0)
         @test_throws ArgumentError MES.ScalingSettings(objective_coeff_lb = 0.0)
         @test_throws ArgumentError MES.ScalingSettings(objective_min_coeff = 1.0e-2)
+        @test_throws ArgumentError MES.ScalingSettings(objective_scaling_factor = 0.0)
         @test MES.ScalingSettings().scale_wideintervals
         @test MES.ScalingSettings().objective_min_coeff == 0.0
+        @test MES.ScalingSettings().objective_scaling_factor == 1.0
 
         legacy_settings = MES.ScalingSettings(
             1.0e-3,
@@ -75,6 +77,15 @@ include("direct_model_contract.jl")
     test_direct_model_scaling(HiGHS.Optimizer)
 
     @testset "objective scaling" begin
+        no_op_model = Model()
+        @variable(no_op_model, no_op_x)
+        @objective(no_op_model, Min, 2.0 * no_op_x)
+        no_op_settings = MES.ScalingSettings(scale_objective_uniformly = true)
+        @test MES.scale_objective!(no_op_model, no_op_settings) === nothing
+        @test JuMP.num_variables(no_op_model) == 1
+        @test isempty(no_op_settings.proxy_var_map)
+        @test no_op_settings.objective_scaling_factor == 1.0
+
         model = Model(HiGHS.Optimizer)
         @variable(model, x)
         @variable(model, y)
@@ -110,6 +121,21 @@ include("direct_model_contract.jl")
         @test objective_coefficient(prune_model, prune_y) == 2.0
         @test JuMP.objective_function(prune_model, JuMP.AffExpr).constant == 7.0
 
+        prune_uniform_model = Model()
+        @variable(prune_uniform_model, prune_uniform_x)
+        @variable(prune_uniform_model, prune_uniform_y)
+        @objective(prune_uniform_model, Min, 1.0e8 * prune_uniform_x + 1.0e-12 * prune_uniform_y + 7.0)
+        prune_uniform_settings = MES.ScalingSettings(
+            objective_min_coeff = 1.0e-9,
+            scale_objective_uniformly = true,
+        )
+        @test MES.scale_objective!(prune_uniform_model, prune_uniform_settings) === nothing
+        @test objective_coefficient(prune_uniform_model, prune_uniform_x) == 1.0e6
+        @test objective_coefficient(prune_uniform_model, prune_uniform_y) == 0.0
+        @test JuMP.objective_function(prune_uniform_model, JuMP.AffExpr).constant == 0.07
+        @test prune_uniform_settings.objective_scaling_factor == 1.0e-2
+        @test JuMP.num_variables(prune_uniform_model) == 2
+
         reuse_model = Model()
         @variable(reuse_model, reuse_x)
         reuse_settings = MES.ScalingSettings()
@@ -120,6 +146,61 @@ include("direct_model_contract.jl")
         MES.scale_objective!(reuse_model, reuse_settings)
         @test JuMP.num_variables(reuse_model) == 2
         @test objective_coefficient(reuse_model, first_proxy) == 2.0e-3
+
+        function uniform_objective_model()
+            uniform_model = Model(HiGHS.Optimizer)
+            @variable(uniform_model, uniform_x >= 0)
+            @variable(uniform_model, uniform_y >= 0)
+            @constraint(uniform_model, uniform_x + uniform_y >= 1.0)
+            @objective(uniform_model, Min, 1.0e8 * uniform_x + 1.0e7 * uniform_y + 2.0)
+            return uniform_model, uniform_x, uniform_y
+        end
+        uniform_original, uniform_original_x, uniform_original_y = uniform_objective_model()
+        optimize!(uniform_original)
+        uniform_original_value = objective_value(uniform_original)
+        uniform_scaled, uniform_scaled_x, uniform_scaled_y = uniform_objective_model()
+        uniform_settings = MES.ScalingSettings(scale_objective_uniformly = true)
+        MES.scale_objective!(uniform_scaled, uniform_settings)
+        @test uniform_settings.objective_scaling_factor == 1.0e-2
+        @test JuMP.num_variables(uniform_scaled) == 2
+        @test JuMP.objective_function(uniform_scaled, JuMP.AffExpr).constant == 2.0e-2
+        optimize!(uniform_scaled)
+        @test isapprox(
+            objective_value(uniform_scaled),
+            uniform_settings.objective_scaling_factor * uniform_original_value;
+            atol = 1.0e-8,
+        )
+        @test isapprox(value(uniform_scaled_x), value(uniform_original_x); atol = 1.0e-8)
+        @test isapprox(value(uniform_scaled_y), value(uniform_original_y); atol = 1.0e-8)
+        MES.scale_objective!(uniform_scaled, uniform_settings)
+        @test uniform_settings.objective_scaling_factor == 1.0e-2
+
+        cumulative_factor_model = Model()
+        @variable(cumulative_factor_model, cumulative_factor_x)
+        @objective(cumulative_factor_model, Min, 1.0e8 * cumulative_factor_x)
+        cumulative_factor_settings = MES.ScalingSettings(
+            scale_objective_uniformly = true,
+            objective_scaling_factor = 2.0,
+        )
+        MES.scale_objective!(cumulative_factor_model, cumulative_factor_settings)
+        @test cumulative_factor_settings.objective_scaling_factor == 2.0e-2
+
+        hybrid_model = Model()
+        @variable(hybrid_model, hybrid_x)
+        @variable(hybrid_model, hybrid_y)
+        @objective(hybrid_model, Min, 1.0e12 * hybrid_x + 1.0e-9 * hybrid_y + 4.0)
+        hybrid_settings = MES.ScalingSettings(scale_objective_uniformly = true)
+        @test MES.scale_objective!(hybrid_model, hybrid_settings) === nothing
+        @test hybrid_settings.objective_scaling_factor == 1.0e-6
+        @test JuMP.num_variables(hybrid_model) == 4
+        @test JuMP.objective_function(hybrid_model, JuMP.AffExpr).constant == 4.0e-6
+
+        proxy_only_model = Model()
+        @variable(proxy_only_model, proxy_only_x)
+        @variable(proxy_only_model, proxy_only_y)
+        @objective(proxy_only_model, Min, 1.0e12 * proxy_only_x + 1.0e-9 * proxy_only_y + 4.0)
+        MES.scale_objective!(proxy_only_model)
+        @test JuMP.num_variables(proxy_only_model) == 5
 
         function objective_scale_model()
             objective_model = Model(HiGHS.Optimizer)
