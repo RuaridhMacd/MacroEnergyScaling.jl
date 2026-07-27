@@ -1,4 +1,4 @@
-# Model Scaling Functions
+# Constraint Scaling Functions
 
 ```@autodocs
 Modules = [MacroEnergyScaling]
