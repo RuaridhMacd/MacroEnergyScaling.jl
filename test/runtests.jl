@@ -29,6 +29,8 @@ include("direct_model_contract.jl")
         @test_throws ArgumentError MES.ScalingSettings(objective_scaling_factor = 0.0)
         @test MES.ScalingSettings().scale_wideintervals
         @test MES.ScalingSettings().constraint_min_coeff == 0.0
+        @test MES.ScalingSettings().constraint_max_proxy_depth == -1
+        @test MES.ScalingSettings().objective_max_proxy_depth == -1
         @test MES.ScalingSettings().objective_min_coeff == 0.0
         @test MES.ScalingSettings().objective_scaling_factor == 1.0
 
@@ -38,7 +40,7 @@ include("direct_model_contract.jl")
             1.0e-9,
             1.0e-3,
             1.0e6,
-            true,
+            -1,
             true,
             true,
             10.0,
@@ -109,6 +111,22 @@ include("direct_model_contract.jl")
         @test MES.scale_constraints!(retained_model, retained_settings) === nothing
         @test JuMP.is_valid(retained_model, retained_con)
         @test haskey(retained_settings.proxy_var_map, retained_x)
+
+        depth_zero_model = Model()
+        @variable(depth_zero_model, depth_zero_x)
+        @constraint(depth_zero_model, 1.0e-20 * depth_zero_x <= 1.0)
+        depth_zero_settings = MES.ScalingSettings(constraint_max_proxy_depth = 0)
+
+        @test MES.scale_constraints!(depth_zero_model, depth_zero_settings) === nothing
+        @test JuMP.num_variables(depth_zero_model) == 1
+
+        depth_one_model = Model()
+        @variable(depth_one_model, depth_one_x)
+        @constraint(depth_one_model, 1.0e-20 * depth_one_x <= 1.0)
+        depth_one_settings = MES.ScalingSettings(constraint_max_proxy_depth = 1)
+
+        @test MES.scale_constraints!(depth_one_model, depth_one_settings) === nothing
+        @test JuMP.num_variables(depth_one_model) == 2
     end
 
     test_direct_model_scaling(HiGHS.Optimizer)
@@ -140,6 +158,14 @@ include("direct_model_contract.jl")
         @objective(variable_model, Min, 1.0e9 * variable_x)
         @test MES.scale_objective!(variable_model) === nothing
         @test objective_coefficient(variable_model, variable_x) == 0.0
+
+        depth_zero_objective_model = Model()
+        @variable(depth_zero_objective_model, depth_zero_objective_x)
+        @objective(depth_zero_objective_model, Min, 1.0e-20 * depth_zero_objective_x)
+        depth_zero_objective_settings = MES.ScalingSettings(objective_max_proxy_depth = 0)
+
+        @test MES.scale_objective!(depth_zero_objective_model, depth_zero_objective_settings) === nothing
+        @test JuMP.num_variables(depth_zero_objective_model) == 1
 
         constant_model = Model()
         @variable(constant_model, constant_x)

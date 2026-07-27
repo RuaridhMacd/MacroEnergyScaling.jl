@@ -403,6 +403,7 @@ function scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Re
             coeff * multiplier,
             scaling_settings.coeff_lb,
             scaling_settings.coeff_ub,
+            scaling_settings.constraint_max_proxy_depth,
             scaling_settings,
         )
         new_var_coeff_pairs[updated_var] = updated_coeff
@@ -442,13 +443,16 @@ function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, 
 end
 
 @doc raw"""
-    scaled_var_coeff_pair(var::VariableRef, coeff::Real, coefficient_lb::Real, coefficient_ub::Real, scaling_settings::ScalingSettings)
+    scaled_var_coeff_pair(var::VariableRef, coeff::Real, coefficient_lb::Real, coefficient_ub::Real, max_proxy_depth::Int, scaling_settings::ScalingSettings)
 
 Return a variable-coefficient pair equivalent to `(var, coeff)` whose
 coefficient is within `coefficient_lb:coefficient_ub` when possible, using
 proxy variables as needed.
 """
-function scaled_var_coeff_pair(var::VariableRef, coeff::Real, coefficient_lb::Real, coefficient_ub::Real, scaling_settings::ScalingSettings)
+function scaled_var_coeff_pair(var::VariableRef, coeff::Real, coefficient_lb::Real, coefficient_ub::Real, max_proxy_depth::Int, scaling_settings::ScalingSettings, proxy_depth::Int=0)
+    if max_proxy_depth >= 0 && proxy_depth >= max_proxy_depth
+        return var, coeff
+    end
     multiplier = calc_coeff_multiplier(coeff, coefficient_lb, coefficient_ub)
     new_coeff = coeff * multiplier
     # Get a new or cached proxy variable, and new or cached multiplier
@@ -461,11 +465,7 @@ function scaled_var_coeff_pair(var::VariableRef, coeff::Real, coefficient_lb::Re
         return (proxy_var, new_coeff)
     end
     # Otherwise, the new coefficient is still outside the requested range.
-    # If recursion is allowed, repeat the process with the proxy coefficient.
-    if scaling_settings.allow_recursion
-        return scaled_var_coeff_pair(proxy_var, new_coeff, coefficient_lb, coefficient_ub, scaling_settings)
-    end
-    return (proxy_var, new_coeff)
+    return scaled_var_coeff_pair(proxy_var, new_coeff, coefficient_lb, coefficient_ub, max_proxy_depth, scaling_settings, proxy_depth + 1)
 end
 
 @doc raw"""

@@ -8,7 +8,7 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
 - constraint_min_coeff::Float64 = 0.0: Constraint coefficients with a smaller absolute value are dropped before scaling.
 - rhs_lb::Float64 = 1e-3: Lower bound for the right-hand side scaling.
 - rhs_ub::Float64 = 1e6: Upper bound for the right-hand side scaling.
-- allow_recursion::Bool = true: Whether to allow recursion in the scaling algorithm.
+- constraint_max_proxy_depth::Int = -1: Maximum number of proxy substitutions for a constraint term. Negative values allow unlimited recursion; `0` disables proxy substitutions.
 - scale_nonaffine::Bool = true: Whether to error when non-scalar-affine constraints are encountered.
 - scale_wideintervals::Bool = true: Whether to error when scalar-affine interval constraints require their bounds to be scaled differently.
 - proxy_multiplier_reuse_ratio::Float64 = 10.0: Reuse an existing proxy when its multiplier is within this multiplicative factor of the requested multiplier.
@@ -18,6 +18,7 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
 - objective_min_coeff::Float64 = 0.0: Objective coefficients with a smaller absolute value are dropped before scaling.
 - scale_objective_uniformly::Bool = false: Whether to apply a uniform multiplier before proxy scaling objective terms.
 - objective_scaling_factor::Float64 = 1.0: Cumulative uniform multiplier applied to the objective.
+- objective_max_proxy_depth::Int = -1: Maximum number of proxy substitutions for an objective term. Negative values allow unlimited recursion; `0` disables proxy substitutions.
 """
 @Base.kwdef mutable struct ScalingSettings
     coeff_lb::Float64 = 1e-3
@@ -25,7 +26,7 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     constraint_min_coeff::Float64 = 0.0
     rhs_lb::Float64 = 1e-3
     rhs_ub::Float64 = 1e6
-    allow_recursion::Bool = true
+    constraint_max_proxy_depth::Int = -1
     scale_nonaffine::Bool = true
     scale_wideintervals::Bool = true
     proxy_multiplier_reuse_ratio::Float64 = 10.0
@@ -35,14 +36,15 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     objective_min_coeff::Float64 = 0.0
     scale_objective_uniformly::Bool = false
     objective_scaling_factor::Float64 = 1.0
+    objective_max_proxy_depth::Int = -1
 
-    function ScalingSettings(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb=1e-3, objective_coeff_ub=1e6, objective_min_coeff=0.0, scale_objective_uniformly=false, objective_scaling_factor=1.0)
+    function ScalingSettings(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, constraint_max_proxy_depth, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb=1e-3, objective_coeff_ub=1e6, objective_min_coeff=0.0, scale_objective_uniformly=false, objective_scaling_factor=1.0, objective_max_proxy_depth=-1)
         coeff_lb = convert(Float64, coeff_lb)
         coeff_ub = convert(Float64, coeff_ub)
         constraint_min_coeff = convert(Float64, constraint_min_coeff)
         rhs_lb = convert(Float64, rhs_lb)
         rhs_ub = convert(Float64, rhs_ub)
-        allow_recursion = convert(Bool, allow_recursion)
+        constraint_max_proxy_depth = convert(Int, constraint_max_proxy_depth)
         scale_nonaffine = convert(Bool, scale_nonaffine)
         scale_wideintervals = convert(Bool, scale_wideintervals)
         proxy_multiplier_reuse_ratio = convert(Float64, proxy_multiplier_reuse_ratio)
@@ -52,9 +54,10 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
         objective_min_coeff = convert(Float64, objective_min_coeff)
         scale_objective_uniformly = convert(Bool, scale_objective_uniformly)
         objective_scaling_factor = convert(Float64, objective_scaling_factor)
+        objective_max_proxy_depth = convert(Int, objective_max_proxy_depth)
         validate_scaling_values(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, proxy_multiplier_reuse_ratio)
         validate_objective_scaling_values(objective_coeff_lb, objective_coeff_ub, objective_min_coeff, objective_scaling_factor)
-        return new(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb, objective_coeff_ub, objective_min_coeff, scale_objective_uniformly, objective_scaling_factor)
+        return new(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, constraint_max_proxy_depth, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb, objective_coeff_ub, objective_min_coeff, scale_objective_uniformly, objective_scaling_factor, objective_max_proxy_depth)
     end
 end
 

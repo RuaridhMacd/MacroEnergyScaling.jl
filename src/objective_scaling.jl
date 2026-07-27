@@ -39,6 +39,7 @@ function scale_objective!(model::Model, scaling_settings::ScalingSettings=Scalin
                 scaled_coeff,
                 scaling_settings.objective_coeff_lb,
                 scaling_settings.objective_coeff_ub,
+                scaling_settings.objective_max_proxy_depth,
                 scaling_settings,
             )
             add_to_expression!(scaled_objective, scaled_coeff, scaled_var)
