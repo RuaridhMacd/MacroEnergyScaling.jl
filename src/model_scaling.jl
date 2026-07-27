@@ -338,7 +338,7 @@ function update_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::
         return (var, 0.0)
     end
     # Get a new or cached proxy variable, and new or cached multiplier
-    (proxy_var, multiplier) = get_proxy_var(var, multiplier, scaling_settings.proxy_var_map, scaling_settings.proxy_var_ratio_ub)
+    (proxy_var, multiplier) = get_proxy_var(var, multiplier, scaling_settings.proxy_var_map, scaling_settings.proxy_multiplier_reuse_ratio)
     new_coeff = coeff * multiplier
     # Tidy up near-unity coefficients, in case that allows a speedup
     (new_coeff, multiplier) = prune_coefficients(new_coeff, coeff, multiplier)
@@ -410,13 +410,13 @@ function calc_coeff_multiplier(coeff::Real, coeff_lb::Real, coeff_ub::Real)
 end
 
 @doc raw"""
-    get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
+    get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_multiplier_reuse_ratio::Real)
 
 Check if a cached proxy variable exists for the variable `var` with a multiplier close to `multiplier`.
 If such a proxy variable exists, return it and its multiplier; otherwise, create a new proxy variable and return it.
 """
-function get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
-    cached_result = existing_proxy_var(var, multiplier, proxy_var_map, proxy_var_ratio_ub)
+function get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_multiplier_reuse_ratio::Real)
+    cached_result = existing_proxy_var(var, multiplier, proxy_var_map, proxy_multiplier_reuse_ratio)
     if !isnothing(cached_result)
         return cached_result
     end
@@ -429,17 +429,17 @@ function get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{V
 end
 
 @doc raw"""
-    existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
+    existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_multiplier_reuse_ratio::Real)
 
 Check if a proxy variable already exists for the variable `var` with a multiplier close to `multiplier`.
 If such a proxy variable exists, return it and its multiplier; otherwise, return nothing.
 """
-function existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
+function existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_multiplier_reuse_ratio::Real)
     if !haskey(proxy_var_map, var)
         return nothing
     end
     for (proxy_var, cached_multiplier) in proxy_var_map[var]
-        if 1 / proxy_var_ratio_ub < multiplier / cached_multiplier < proxy_var_ratio_ub
+        if 1 / proxy_multiplier_reuse_ratio < multiplier / cached_multiplier < proxy_multiplier_reuse_ratio
             return proxy_var, cached_multiplier
         end
     end

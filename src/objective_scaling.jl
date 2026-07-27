@@ -129,7 +129,7 @@ function update_objective_var_coeff_pair(var::VariableRef, coeff::Real, scaling_
         var,
         multiplier,
         scaling_settings.proxy_var_map,
-        scaling_settings.proxy_var_ratio_ub,
+        scaling_settings.proxy_multiplier_reuse_ratio,
     )
     new_coeff = coeff * multiplier
     new_coeff, multiplier = prune_coefficients(new_coeff, coeff, multiplier)
