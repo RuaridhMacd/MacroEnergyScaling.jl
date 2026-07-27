@@ -22,12 +22,13 @@ include("direct_model_contract.jl")
         @test_throws ArgumentError MES.ScalingSettings(coeff_lb = 0.0)
         @test_throws ArgumentError MES.ScalingSettings(coeff_lb = 2.0, coeff_ub = 1.0)
         @test_throws ArgumentError MES.ScalingSettings(rhs_lb = 0.0)
-        @test_throws ArgumentError MES.ScalingSettings(min_coeff = 1.0e-2)
+        @test_throws ArgumentError MES.ScalingSettings(constraint_min_coeff = 1.0e-2)
         @test_throws ArgumentError MES.ScalingSettings(proxy_multiplier_reuse_ratio = 1.0)
         @test_throws ArgumentError MES.ScalingSettings(objective_coeff_lb = 0.0)
         @test_throws ArgumentError MES.ScalingSettings(objective_min_coeff = 1.0e-2)
         @test_throws ArgumentError MES.ScalingSettings(objective_scaling_factor = 0.0)
         @test MES.ScalingSettings().scale_wideintervals
+        @test MES.ScalingSettings().constraint_min_coeff == 0.0
         @test MES.ScalingSettings().objective_min_coeff == 0.0
         @test MES.ScalingSettings().objective_scaling_factor == 1.0
 
@@ -72,6 +73,42 @@ include("direct_model_contract.jl")
         @test JuMP.is_valid(model, con)
         @test coefficient_values(con) == [1.0e6, 1.0e6]
         @test JuMP.normalized_rhs(con) == 1.0e5
+    end
+
+    @testset "constraint coefficient pruning" begin
+        pruned_model = Model()
+        @variable(pruned_model, pruned_x)
+        @variable(pruned_model, pruned_y)
+        pruned_con = @constraint(pruned_model, 1.0e-9 * pruned_x + 2.0 * pruned_y <= 4.0)
+        pruning_settings = MES.ScalingSettings(constraint_min_coeff = 1.0e-8)
+
+        @test MES.scale_constraints!(pruned_model, pruning_settings) === nothing
+        @test JuMP.is_valid(pruned_model, pruned_con)
+        @test JuMP.normalized_coefficient(pruned_con, pruned_x) == 0.0
+        @test JuMP.normalized_coefficient(pruned_con, pruned_y) == 2.0
+        @test isempty(pruning_settings.proxy_var_map)
+
+        interval_model = Model()
+        @variable(interval_model, interval_x)
+        @variable(interval_model, interval_y)
+        interval_con = @constraint(interval_model, 1.0 <= 1.0e-9 * interval_x + 2.0 * interval_y <= 4.0)
+        interval_settings = MES.ScalingSettings(constraint_min_coeff = 1.0e-8)
+
+        @test MES.scale_constraints!(interval_model, interval_settings) === nothing
+        @test JuMP.is_valid(interval_model, interval_con)
+        @test JuMP.normalized_coefficient(interval_con, interval_x) == 0.0
+        @test JuMP.normalized_coefficient(interval_con, interval_y) == 2.0
+        @test isempty(interval_settings.proxy_var_map)
+
+        retained_model = Model()
+        @variable(retained_model, retained_x)
+        @variable(retained_model, retained_y)
+        retained_con = @constraint(retained_model, 1.0e-20 * retained_x + retained_y <= 1.0)
+        retained_settings = MES.ScalingSettings()
+
+        @test MES.scale_constraints!(retained_model, retained_settings) === nothing
+        @test JuMP.is_valid(retained_model, retained_con)
+        @test haskey(retained_settings.proxy_var_map, retained_x)
     end
 
     test_direct_model_scaling(HiGHS.Optimizer)

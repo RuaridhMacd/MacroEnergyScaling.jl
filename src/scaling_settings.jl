@@ -5,7 +5,7 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     
 - coeff_lb::Float64 = 1e-3: Lower bound for the scaling coefficients.
 - coeff_ub::Float64 = 1e6: Upper bound for the scaling coefficients.
-- min_coeff::Float64 = 1e-9: Minimum value for the scaling coefficients.
+- constraint_min_coeff::Float64 = 0.0: Constraint coefficients with a smaller absolute value are dropped before scaling.
 - rhs_lb::Float64 = 1e-3: Lower bound for the right-hand side scaling.
 - rhs_ub::Float64 = 1e6: Upper bound for the right-hand side scaling.
 - allow_recursion::Bool = true: Whether to allow recursion in the scaling algorithm.
@@ -22,7 +22,7 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
 @Base.kwdef mutable struct ScalingSettings
     coeff_lb::Float64 = 1e-3
     coeff_ub::Float64 = 1e6
-    min_coeff::Float64 = 1e-9
+    constraint_min_coeff::Float64 = 0.0
     rhs_lb::Float64 = 1e-3
     rhs_ub::Float64 = 1e6
     allow_recursion::Bool = true
@@ -36,10 +36,10 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
     scale_objective_uniformly::Bool = false
     objective_scaling_factor::Float64 = 1.0
 
-    function ScalingSettings(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb=1e-3, objective_coeff_ub=1e6, objective_min_coeff=0.0, scale_objective_uniformly=false, objective_scaling_factor=1.0)
+    function ScalingSettings(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb=1e-3, objective_coeff_ub=1e6, objective_min_coeff=0.0, scale_objective_uniformly=false, objective_scaling_factor=1.0)
         coeff_lb = convert(Float64, coeff_lb)
         coeff_ub = convert(Float64, coeff_ub)
-        min_coeff = convert(Float64, min_coeff)
+        constraint_min_coeff = convert(Float64, constraint_min_coeff)
         rhs_lb = convert(Float64, rhs_lb)
         rhs_ub = convert(Float64, rhs_ub)
         allow_recursion = convert(Bool, allow_recursion)
@@ -52,9 +52,9 @@ A structure to store the scaling settings for the scaling algorithm. The fields 
         objective_min_coeff = convert(Float64, objective_min_coeff)
         scale_objective_uniformly = convert(Bool, scale_objective_uniformly)
         objective_scaling_factor = convert(Float64, objective_scaling_factor)
-        validate_scaling_values(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, proxy_multiplier_reuse_ratio)
+        validate_scaling_values(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, proxy_multiplier_reuse_ratio)
         validate_objective_scaling_values(objective_coeff_lb, objective_coeff_ub, objective_min_coeff, objective_scaling_factor)
-        return new(coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb, objective_coeff_ub, objective_min_coeff, scale_objective_uniformly, objective_scaling_factor)
+        return new(coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, allow_recursion, scale_nonaffine, scale_wideintervals, proxy_multiplier_reuse_ratio, proxy_var_map, objective_coeff_lb, objective_coeff_ub, objective_min_coeff, scale_objective_uniformly, objective_scaling_factor)
     end
 end
 
@@ -71,15 +71,15 @@ function validate_objective_scaling_values(objective_coeff_lb::Float64, objectiv
     return nothing
 end
 
-function validate_scaling_values(coeff_lb::Float64, coeff_ub::Float64, min_coeff::Float64, rhs_lb::Float64, rhs_ub::Float64, proxy_multiplier_reuse_ratio::Float64)
-    if !all(isfinite, (coeff_lb, coeff_ub, min_coeff, rhs_lb, rhs_ub, proxy_multiplier_reuse_ratio))
+function validate_scaling_values(coeff_lb::Float64, coeff_ub::Float64, constraint_min_coeff::Float64, rhs_lb::Float64, rhs_ub::Float64, proxy_multiplier_reuse_ratio::Float64)
+    if !all(isfinite, (coeff_lb, coeff_ub, constraint_min_coeff, rhs_lb, rhs_ub, proxy_multiplier_reuse_ratio))
         throw(ArgumentError("Scaling settings must be finite."))
     elseif coeff_lb <= 0.0 || coeff_lb > coeff_ub
         throw(ArgumentError("coeff_lb must be positive and no greater than coeff_ub."))
     elseif rhs_lb <= 0.0 || rhs_lb > rhs_ub
         throw(ArgumentError("rhs_lb must be positive and no greater than rhs_ub."))
-    elseif min_coeff < 0.0 || min_coeff > coeff_lb
-        throw(ArgumentError("min_coeff must be nonnegative and no greater than coeff_lb."))
+    elseif constraint_min_coeff < 0.0 || constraint_min_coeff > coeff_lb
+        throw(ArgumentError("constraint_min_coeff must be nonnegative and no greater than coeff_lb."))
     elseif proxy_multiplier_reuse_ratio <= 1.0
         throw(ArgumentError("proxy_multiplier_reuse_ratio must be greater than 1."))
     end
@@ -90,7 +90,7 @@ function validate_scaling_settings(scaling_settings::ScalingSettings)
     validate_scaling_values(
         scaling_settings.coeff_lb,
         scaling_settings.coeff_ub,
-        scaling_settings.min_coeff,
+        scaling_settings.constraint_min_coeff,
         scaling_settings.rhs_lb,
         scaling_settings.rhs_ub,
         scaling_settings.proxy_multiplier_reuse_ratio,

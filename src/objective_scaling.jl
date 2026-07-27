@@ -34,7 +34,13 @@ function scale_objective!(model::Model, scaling_settings::ScalingSettings=Scalin
         if scaling_settings.objective_coeff_lb <= abs(scaled_coeff) <= scaling_settings.objective_coeff_ub
             add_to_expression!(scaled_objective, scaled_coeff, var)
         else
-            scaled_var, scaled_coeff = update_objective_var_coeff_pair(var, scaled_coeff, scaling_settings)
+            scaled_var, scaled_coeff = scaled_var_coeff_pair(
+                var,
+                scaled_coeff,
+                scaling_settings.objective_coeff_lb,
+                scaling_settings.objective_coeff_ub,
+                scaling_settings,
+            )
             add_to_expression!(scaled_objective, scaled_coeff, scaled_var)
         end
     end
@@ -117,26 +123,4 @@ function scalar_affine_objective(model::Model)
         end
         rethrow()
     end
-end
-
-function update_objective_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::ScalingSettings)
-    multiplier = calc_coeff_multiplier(
-        coeff,
-        scaling_settings.objective_coeff_lb,
-        scaling_settings.objective_coeff_ub,
-    )
-    proxy_var, multiplier = get_proxy_var(
-        var,
-        multiplier,
-        scaling_settings.proxy_var_map,
-        scaling_settings.proxy_multiplier_reuse_ratio,
-    )
-    new_coeff = coeff * multiplier
-    new_coeff, multiplier = prune_coefficients(new_coeff, coeff, multiplier)
-    if scaling_settings.objective_coeff_lb <= abs(new_coeff) <= scaling_settings.objective_coeff_ub
-        return proxy_var, new_coeff
-    elseif scaling_settings.allow_recursion
-        return update_objective_var_coeff_pair(proxy_var, new_coeff, scaling_settings)
-    end
-    return proxy_var, new_coeff
 end
